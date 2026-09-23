@@ -144,7 +144,7 @@ Pick one with `--theme`. Both work with `--variant clean`, `--accent` and every 
 | Theme | Look |
 |---|---|
 | `studio` (default) | A dark glass card, Inter numbers, glossy amber note chips, comet sustain lines and a soft light behind the playhead. Clean and polished. |
-| `ink` | A soft dry-brush stroke of plum-black ink with a light film grain, large typewriter fret numbers (Courier Prime), pen-drawn strings and stems, handwritten notes (P.M., let ring, bar numbers) and rose-gold highlights: a metallic marker for the playhead, and numbers that glow rose gold as they're played. Faint botanical line art sits on the ink (a vine of leaves and blossoms, sketched roses and a few slowly drifting petals). It opens and closes with a brush wipe. |
+| `ink` | A soft dry-brush stroke of plum-black ink with a light film grain, large typewriter fret numbers (Courier Prime), pen-drawn strings and stems, handwritten notes (P.M., let ring, bar numbers) and rose-gold highlights: a metallic marker for the playhead, and numbers that glow rose gold as they're played. Faint botanical engraving covers the ink: curving stems with veined leaves, layered line-drawn blooms, buds and tendrils, softest behind the strings. There's no bar counter or progress line in this theme. It opens and closes with a brush wipe. |
 
 ```bash
 python tabscroll.py mysong.gp --theme ink --out renders/mysong_ink --formats prores
@@ -208,8 +208,8 @@ Use the 4K render on 4K timelines. On a 1080p timeline, either render with `--sc
 | `P.M. - - - -┐` / `let ring - - -┐` | Palm mute and let ring spans. |
 | Stems and beams under the tab | Rhythm (8ths, 16ths, dots and rests). |
 | Dimmed notes on the left | Already played. |
-| `BAR 13 / 42` (top left) | Current bar and total bars. |
-| Thin line along the bottom | Progress through the song. |
+| `BAR 13 / 42` (top left, studio theme) | Current bar and total bars. |
+| Thin line along the bottom (studio theme) | Progress through the song. |
 
 ## Limitations
 
