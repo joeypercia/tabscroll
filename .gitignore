@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.mov
+*.webm
+*.mp4
+*_preview_bg.png
+still_*.png
+renders/
