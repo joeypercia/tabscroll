@@ -1000,7 +1000,7 @@ def _smoothstep(v):
 
 class InkRenderer(Renderer):
     """Hand-made look: a soft dry-brush ink stroke for a backdrop, typewriter
-    fret numbers, pen-drawn lines, handwritten notes and rose-gold ink stamps."""
+    fret numbers, pen-drawn lines, handwritten notes and rose-gold highlights."""
 
     DEFAULT_ACCENT = (228, 158, 146)        # rose gold
 
@@ -1213,34 +1213,17 @@ class InkRenderer(Renderer):
                     if segs:
                         self.draw_brush(c, n, segs, self.ink, 0.30)
 
-    def stamp(self, c, n, x, y, fl):
-        """An ink stamp behind a note as it is played."""
-        s = self.s
-        rng = random.Random(_seed(n.beat.t0, n.string, "stamp"))
-        r = self.chip_rect(n, x, y)
-        rx, ry = r.width() / 2 + 2 * s, r.height() / 2 + 1.5 * s
-        rot, ph = rng.uniform(-0.15, 0.15), rng.uniform(0, 2 * math.pi)
-        path = skia.Path()
-        for j in range(22):
-            th = 2 * math.pi * j / 22
-            wob = 1 + 0.04 * math.sin(3 * th + ph) + rng.uniform(-0.02, 0.02)
-            px, py = rx * wob * math.cos(th), ry * wob * math.sin(th)
-            X = x + px * math.cos(rot) - py * math.sin(rot)
-            Y = y + px * math.sin(rot) + py * math.cos(rot)
-            if j == 0:
-                path.moveTo(X, Y)
-            else:
-                path.lineTo(X, Y)
-        path.close()
-        c.drawPath(path, mkpaint(self.accent_hi, 0.45 * fl, blur=5 * s))        # soft glow
-        metal = skia.GradientShader.MakeLinear(
-            [skia.Point(x, y - ry), skia.Point(x, y + ry)],
-            [rgba(self.accent_hi, fl), rgba(self.accent, fl), rgba(self.accent_lo, fl)], [0, 0.5, 1])
-        p = mkpaint(shader=metal)
-        p.setPathEffect(self.rough_fill)
-        c.drawPath(path, p)
-
     def draw_live(self, c, t, vis):
+        s = self.s
+        clear = mkpaint((0, 0, 0), 1.0, blend=skia.BlendMode.kDstOut)
+        for b in vis:
+            x = self.X(b.t0, t)
+            for n in b.notes:
+                hw = self.ghost_half_w(n) if n.hidden else self.half_w(n) - 2 * s
+                if abs(x - self.P) < hw + 3 * s:
+                    y = self.ys[n.string]
+                    r = skia.Rect.MakeLTRB(x - hw, y - 8 * s, x + hw, y + 8 * s)
+                    c.drawRRect(skia.RRect.MakeRectXY(r, 4 * s, 4 * s), clear)
         for b in vis:
             x = self.X(b.t0, t)
             for n in b.notes:
@@ -1266,17 +1249,10 @@ class InkRenderer(Renderer):
                 if fl <= 0:
                     self.draw_fret_text(c, n, x, y, self.accent, su)
                     continue
-                pop = 1.0 + 0.08 * math.exp(-max(0.0, t - b.t0) / 0.06)
-                c.save()
-                c.translate(x, y)
-                c.scale(pop, pop)
-                c.translate(-x, -y)
-                self.stamp(c, n, x, y, fl)
+                # the hit: the number itself glows rose gold for a moment; nothing covers it
                 base, base_a = (self.accent, su) if su > 0 else (self.ink, self.dim_at(x))
-                mix = float(_smoothstep((fl - 0.3) / 0.3))   # no muddy in-between colour
-                col = tuple(int(round(p + (q - p) * mix)) for p, q in zip(base, self.dark))
+                col = tuple(int(round(p + (q - p) * fl)) for p, q in zip(base, self.accent_hi))
                 self.draw_fret_text(c, n, x, y, col, base_a + (1.0 - base_a) * fl)
-                c.restore()
 
     def draw_playhead(self, c, t):
         s = self.s
