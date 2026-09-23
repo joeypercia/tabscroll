@@ -3,8 +3,9 @@
 Turn a Guitar Pro tab into a single-line tab that scrolls from right to left, for playthrough videos.
 The output is a video with a transparent background, so you can drop it on top of your footage in any editor.
 
-![tabscroll preview, studio theme](docs/preview.webp)
-![tabscroll preview, ink theme](docs/preview-ink.webp)
+![tabscroll preview: the studio theme on top, the ink theme below](docs/preview.webp)
+
+<sub>Top: the `studio` theme. Bottom: the `ink` theme. Both play the bundled demo tab.</sub>
 
 - **Synced by design.** The tab scrolls at a constant speed, and each note hits the playhead exactly when it's played.
   Line up one point with your recording and the rest of the song stays in sync.
@@ -45,11 +46,9 @@ python examples/make_demo.py                               # writes examples/dem
 python tabscroll.py examples/demo.gp --still 5              # writes still_005.000.png
 ```
 
-The animated previews at the top of this page are the demo too:
-
-```bash
-python tabscroll.py examples/demo.gp --theme ink --out docs/preview-ink --formats webp --start 2.6 --limit 7
-```
+The animated preview at the top of this page is the demo too, with both themes drawn in one image so they
+stay in sync (`python examples/make_preview.py`). For a quick animated preview of your own tab, use
+`--formats webp` (see below).
 
 ## 2. Get your tab as a `.gp` file
 
