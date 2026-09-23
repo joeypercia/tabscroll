@@ -1040,7 +1040,7 @@ class InkRenderer(Renderer):
     typewriter fret numbers, pen-drawn lines, handwritten notes and rose-gold
     highlights."""
 
-    DEFAULT_ACCENT = (228, 158, 146)        # rose gold
+    DEFAULT_ACCENT = (232, 152, 172)        # rose gold, leaning pink (not peach)
     STRING_SPACING = 38                     # room for bigger numbers
     LABEL_INSET = 58                        # keep the string names well inside the ragged brush edge
 
@@ -1060,8 +1060,8 @@ class InkRenderer(Renderer):
         self.ink = (248, 241, 236)          # warm cream
         self.accent = accent or self.DEFAULT_ACCENT
         # a metallic ramp around the accent: champagne highlight to deep rose
-        self.accent_hi = tuple(int(round(a + (b - a) * 0.55)) for a, b in zip(self.accent, (255, 240, 232)))
-        self.accent_lo = tuple(int(round(a + (b - a) * 0.45)) for a, b in zip(self.accent, (150, 78, 96)))
+        self.accent_hi = tuple(int(round(a + (b - a) * 0.55)) for a, b in zip(self.accent, (255, 238, 244)))
+        self.accent_lo = tuple(int(round(a + (b - a) * 0.45)) for a, b in zip(self.accent, (146, 72, 100)))
         self.dark = (44, 22, 30)            # plum ink for digits on a stamp
         self.glow = tuple(int(round(a + (b - a) * 0.25)) for a, b in zip(self.accent, self.accent_hi))
         self.string_a = 0.38 if self.variant == "card" else 0.5
@@ -1197,7 +1197,7 @@ class InkRenderer(Renderer):
 
 
     # -- faint botanical engraving on the ink stroke --------------------------------
-    ROSE_GOLD, BLUSH, PEARL = (228, 158, 146), (244, 192, 198), (228, 224, 230)
+    ROSE_GOLD, BLUSH, PEARL = (226, 150, 170), (242, 190, 206), (228, 224, 232)
     FLORAL_STRENGTH = 0.35                  # overall opacity of the floral layer
 
     def _botanicals(self, c, rng):

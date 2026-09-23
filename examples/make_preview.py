@@ -1,4 +1,4 @@
-"""Build docs/preview-themes.webp: every theme stacked in one looping animation.
+"""Build docs/tabscroll-preview.webp: every theme stacked in one looping animation.
 
 All themes are drawn from the same moment of the demo tab in every frame, so
 they stay perfectly in sync (two separate animated images never would: each
@@ -32,7 +32,7 @@ def main():
     backdrop = top * (1 - ramp) + bottom * ramp
     backdrop = np.broadcast_to(backdrop, (ch, cw, 3)).copy()
     out_h = int(round(ch * WIDTH / cw / 2)) * 2
-    out = os.path.join(ROOT, "docs", "preview-themes.webp")
+    out = os.path.join(ROOT, "docs", "tabscroll-preview.webp")
     ff = subprocess.Popen(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                            "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{WIDTH}x{out_h}", "-r", str(FPS), "-i", "-",
                            "-c:v", "libwebp_anim", "-lossless", "0", "-quality", "82", "-loop", "0", out],

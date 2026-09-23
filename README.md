@@ -3,7 +3,7 @@
 Turn a Guitar Pro tab into a single-line tab that scrolls from right to left, for playthrough videos.
 The output is a video with a transparent background, so you can drop it on top of your footage in any editor.
 
-![tabscroll preview: the studio theme on top, the ink theme below](docs/preview-themes.webp)
+![tabscroll preview: the studio theme on top, the ink theme below](docs/tabscroll-preview.webp)
 
 <sub>Top: the `studio` theme. Bottom: the `ink` theme. Both play the bundled demo tab.</sub>
 
@@ -126,7 +126,7 @@ python tabscroll.py mysong.gp --scale 2 --variant clean --out renders/mysong_4k_
 | `--preroll` | `3.0` | Seconds before bar 1 reaches the playhead. |
 | `--px-per-beat` | `200` | Scroll speed: bigger is faster and more spread out. Try 240–280 for dense 16th-note riffs, 160 for slow songs. |
 | `--playhead` | `0.22` | Playhead position, as a fraction of the width. |
-| `--accent` | per theme | Highlight color, as hex. Defaults to amber `FFB74D` for studio and rose gold `E49E92` for ink. Try `4FD1FF` cyan, `FF5C7A` pink or `9BE564` green. |
+| `--accent` | per theme | Highlight color, as hex. Defaults to amber `FFB74D` for studio and rose gold `E898AC` for ink. Try `4FD1FF` cyan, `FF5C7A` pink or `9BE564` green. |
 | `--anim-width`, `--anim-fps` | `960`, `30` | Size and frame rate of `gif` / `webp` previews. |
 | `--still T` | | Render a PNG at video time `T` instead of a video. Repeatable. |
 | `--bg image.png` | | Background for `--still` composites and the `preview` MP4. Without it, previews use a plain dark gradient. |
