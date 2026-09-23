@@ -80,7 +80,7 @@ def _props(el):
     return {p.get("name"): p for p in el.findall("Properties/Property")}
 
 
-def load_score(path, track=0, drop_strings=()):
+def load_score(path, track=0, drop_strings=(), tuning=None):
     with zipfile.ZipFile(path) as z:
         root = ET.fromstring(z.read("Content/score.gpif"))
 
@@ -100,6 +100,10 @@ def load_score(path, track=0, drop_strings=()):
     sc.title = (root.findtext("Score/Title") or "").strip()
     sc.track_name = tr.findtext("Name").strip()
     sc.tuning = [PITCH_NAMES[pitches[gs] % 12] for gs in reversed(kept)]  # top row first
+    if tuning:
+        if len(tuning) != len(kept):
+            raise SystemExit(f"--tuning has {len(tuning)} names but {len(kept)} strings are shown")
+        sc.tuning = list(reversed(tuning))
     sc.nstrings = len(kept)
 
     tempos = {}
@@ -317,7 +321,7 @@ class Renderer:
         self.yb = self.ys[-1]
         self.stem_top = self.yb + 19 * s
         self.stem_bot = self.stem_top + 25 * s
-        self.H = int(round(self.stem_bot + 22 * s))
+        self.H = int(round(self.stem_bot + 28 * s))
         self.H += self.H % 2
         self.card_l, self.card_r = 12 * s, self.W - 12 * s
         self.card_t, self.card_b = 8 * s, self.H - 8 * s
@@ -351,8 +355,12 @@ class Renderer:
         assert self.info.colorType() == skia.kBGRA_8888_ColorType
         self.surf_a = skia.Surface(self.W, self.H)
         self.surf_b = skia.Surface(self.W, self.H)
+        self.surf_c = skia.Surface(self.W, self.H)
         self.buf_a = np.zeros((self.H, self.W, 4), np.uint8)
         self.buf_b = np.zeros((self.H, self.W, 4), np.uint8)
+        self.buf_c = np.zeros((self.H, self.W, 4), np.uint8)
+        self.f_acc = load_font("Bravura.otf", 19 * s)
+        self.bar_t0 = [b[2] for b in sc.bars]
         self._build_static()
 
     # -- geometry -----------------------------------------------------------
@@ -408,8 +416,22 @@ class Renderer:
                 [skia.Point(0, self.card_t), skia.Point(0, self.card_b)],
                 [rgba((20, 23, 30), 0.74), rgba((10, 11, 15), 0.80)], [0, 1])
             c.drawRRect(rr, mkpaint(shader=fill))
+            # soft light column behind the playhead
+            c.save()
+            c.clipRRect(rr, skia.ClipOp.kIntersect, True)
+            P, hw = self.P, 110 * s
+            beam = skia.GradientShader.MakeLinear(
+                [skia.Point(P - hw, 0), skia.Point(P + hw, 0)],
+                [rgba(self.accent, 0), rgba(self.accent, 0.085), rgba(self.accent, 0)], [0, 0.5, 1])
+            c.drawRect(skia.Rect.MakeLTRB(P - hw, self.card_t, P + hw, self.card_b), mkpaint(shader=beam))
+            c.restore()
+            # glass edge: brighter along the top, fading down
             inset = skia.RRect.MakeRectXY(r.makeInset(0.5 * s, 0.5 * s), 17.5 * s, 17.5 * s)
-            c.drawRRect(inset, mkpaint((255, 255, 255), 0.08, stroke=1 * s))
+            sheen = skia.GradientShader.MakeLinear(
+                [skia.Point(0, self.card_t), skia.Point(0, self.card_b)],
+                [rgba((255, 255, 255), 0.22), rgba((255, 255, 255), 0.07), rgba((255, 255, 255), 0.04)],
+                [0, 0.35, 1])
+            c.drawRRect(inset, mkpaint(stroke=1 * s, shader=sheen))
         self.draw_labels(c)
         buf = np.zeros((H, W, 4), np.uint8)
         surf.readPixels(self.info, buf)
@@ -442,8 +464,8 @@ class Renderer:
         t = t_video - self.preroll
         W, H, s = self.W, self.H, self.s
 
-        master = min(1.0, t_video / 0.45, (self.total - t_video) / 0.9)
-        master = ease_out(max(0.0, master))
+        master = ease_out(max(0.0, min(1.0, t_video / 0.7, (self.total - t_video) / 0.9)))
+        lift = (1.0 - master) * 22 * s          # slides up into place, and back down at the end
 
         t_lo = t - (self.P + 80 * s) / self.pps
         t_hi = t + (W - self.P + 80 * s) / self.pps
@@ -470,11 +492,16 @@ class Renderer:
         self.draw_playhead(c, t)
         self.draw_live(c, t, vis)
 
+        c = self.surf_c.getCanvas()
+        c.clear(skia.ColorTRANSPARENT)
+        self.draw_hud(c, t)
+
         self.surf_a.readPixels(self.info, self.buf_a)
         self.surf_b.readPixels(self.info, self.buf_b)
-        return self.composite(master)
+        self.surf_c.readPixels(self.info, self.buf_c)
+        return self.composite(master, lift)
 
-    def composite(self, master):
+    def composite(self, master, lift=0.0):
         A = self.buf_a.astype(np.float32)
         A *= self.mask_a
         B = self.buf_b.astype(np.float32)
@@ -490,6 +517,13 @@ class Renderer:
         out += A
         out *= 1.0 - B[..., 3:4]
         out += B
+        C = self.buf_c.astype(np.float32) * (1 / 255.0)
+        out *= 1.0 - C[..., 3:4]
+        out += C
+        if lift > 0.02:
+            M = np.float32([[1, 0, 0], [0, 1, lift]])
+            out = cv2.warpAffine(out, M, (self.W, self.H), flags=cv2.INTER_LINEAR,
+                                 borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
         if master < 1.0:
             out *= master
         alpha = out[..., 3:4]
@@ -806,8 +840,14 @@ class Renderer:
                 if fl <= 0 and su <= 0:
                     continue
                 if su > 0:
-                    for xa, xb in self.tail_segments(n, t, x_max=self.P):
-                        c.drawLine(xa, y, xb, y, mkpaint(self.accent, 0.9 * su, stroke=3.4 * s))
+                    segs = self.tail_segments(n, t, x_max=self.P)
+                    if segs:
+                        g0, g1 = segs[0][0], max(segs[-1][1], segs[0][0] + 1)
+                        comet = skia.GradientShader.MakeLinear(
+                            [skia.Point(g0, 0), skia.Point(g1, 0)],
+                            [rgba(self.accent, 0.30 * su), rgba(self.accent, 0.95 * su)], [0, 1])
+                        for xa, xb in segs:
+                            c.drawLine(xa, y, xb, y, mkpaint(stroke=3.4 * s, shader=comet))
                 if fl <= 0:
                     self.draw_fret_text(c, n, x, y, self.accent, su)
                     continue
@@ -819,7 +859,12 @@ class Renderer:
                 r = self.chip_rect(n, x, y)
                 rr = skia.RRect.MakeRectXY(r, r.height() / 2, r.height() / 2)
                 c.drawRRect(rr, mkpaint(self.accent, 0.55 * fl, blur=7 * s))
-                c.drawRRect(rr, mkpaint(self.accent, fl))
+                hi = tuple(int(a + (255 - a) * 0.38) for a in self.accent)
+                lo = tuple(int(a * 0.9) for a in self.accent)
+                gloss = skia.GradientShader.MakeLinear(
+                    [skia.Point(0, r.top()), skia.Point(0, r.bottom())],
+                    [rgba(hi, fl), rgba(self.accent, fl), rgba(lo, fl)], [0, 0.55, 1])
+                c.drawRRect(rr, mkpaint(shader=gloss))
                 base, base_a = (self.accent, su) if su > 0 else (self.ink, self.dim_at(x))
                 mix = fl * fl          # text returns to its resting colour before the chip is gone
                 col = tuple(int(round(p + (q - p) * mix)) for p, q in zip(base, self.dark))
@@ -827,10 +872,48 @@ class Renderer:
                 c.restore()
 
     def draw_labels(self, c):
+        cap = self.f_lab.getMetrics().fCapHeight
+        paint = mkpaint(self.ink, 0.6)
         for name, y in zip(self.sc.tuning, self.ys):
-            w = self.f_lab.measureText(name)
-            c.drawString(name, self.lab_x - w / 2, y + self.f_lab.getMetrics().fCapHeight / 2,
-                         self.f_lab, mkpaint(self.ink, 0.55))
+            letter, acc = name[:1], name[1:]
+            glyph = {"#": "\uE262", "b": "\uE260"}.get(acc, "")
+            w = self.f_lab.measureText(letter)
+            gw, gb = 0.0, None
+            if glyph:
+                gb = self.f_acc.getBounds(self.f_acc.textToGlyphs(glyph))[0]
+                gw = gb.width() + 1.5 * self.s
+            x = self.lab_x - (w + gw) / 2
+            c.drawString(letter, x, y + cap / 2, self.f_lab, paint)
+            if glyph:
+                gx = x + w + 1.5 * self.s - gb.left()
+                gy = y - cap * 0.12 - (gb.top() + gb.bottom()) / 2
+                c.drawString(glyph, gx, gy, self.f_acc, paint)
+
+    def draw_hud(self, c, t):
+        """Bar counter and a hairline showing progress through the song."""
+        s = self.s
+        x0, x1 = self.card_l + 22 * s, self.card_r - 22 * s
+        y = self.card_b - 8 * s
+        c.drawLine(x0, y, x1, y, mkpaint((255, 255, 255), 0.08, stroke=2 * s))
+        frac = min(1.0, max(0.0, t / self.sc.end_t))
+        if frac > 0:
+            xf = x0 + (x1 - x0) * frac
+            fill = skia.GradientShader.MakeLinear(
+                [skia.Point(x0, 0), skia.Point(xf, 0)],
+                [rgba(self.accent, 0.15), rgba(self.accent, 0.85)], [0, 1])
+            c.drawLine(x0, y, xf, y, mkpaint(stroke=2 * s, shader=fill))
+            c.drawCircle(xf, y, 3.2 * s, mkpaint(self.accent, 0.35, blur=2.5 * s))
+            c.drawCircle(xf, y, 2.2 * s, mkpaint(self.accent, 1.0))
+        nbars = len(self.sc.bars)
+        cur = min(nbars, max(1, bisect.bisect_right(self.bar_t0, t)))
+        yb = self.y0 - 30 * s
+        xl = self.card_l + 20 * s
+        c.drawString("BAR", xl, yb, self.f_small, mkpaint(self.ink, 0.35))
+        xl += self.f_small.measureText("BAR") + 6 * s
+        num = str(cur)
+        c.drawString(num, xl, yb, self.f_tech, mkpaint(self.ink, 0.75))
+        xl += self.f_tech.measureText(num) + 3 * s
+        c.drawString("/ %d" % nbars, xl, yb, self.f_small, mkpaint(self.ink, 0.35))
 
 
 # --------------------------------------------------------------------------
@@ -853,9 +936,9 @@ def over(bg, fg_rgba, x, y):
 _worker = None
 
 
-def _init_worker(gp, track, drop, kw):
+def _init_worker(gp, track, drop, tuning, kw):
     global _worker
-    _worker = Renderer(load_score(gp, track, drop), **kw)
+    _worker = Renderer(load_score(gp, track, drop, tuning), **kw)
 
 
 def _render_frame(k):
@@ -888,6 +971,17 @@ def ffmpeg_cmd(r, args, fmts):
         else:
             raise SystemExit(f"unknown format {f}")
     return cmd + ["-filter_complex", ";".join(fc)] + maps
+
+
+def parse_tuning(text):
+    """'A-E-B-E-G#-B', 'A E B E G♯ B' or 'A,E,B,...' -> ['A', 'E', 'B', 'E', 'G#', 'B']."""
+    import re
+    text = text.replace("♯", "#").replace("♭", "b")
+    names = [n for n in re.split(r"[\s,\-–—/]+", text) if n]
+    for n in names:
+        if not re.fullmatch(r"[A-Ga-g][#b]?", n):
+            raise SystemExit(f"--tuning: can't read note name {n!r}")
+    return [n[0].upper() + n[1:] for n in names]
 
 
 def list_tracks(path):
@@ -938,6 +1032,8 @@ def main():
                     help="comma list of strings to hide, counted from the LOWEST string starting at 0 "
                          "(e.g. 0 hides the low B of a 7-string)")
     ap.add_argument("--list-tracks", action="store_true", help="print the tracks in the file and exit")
+    ap.add_argument("--tuning", help='string names to display, low to high, e.g. "A E B E G# B" '
+                                     "(labels only; fret numbers are unchanged)")
     ap.add_argument("--scale", type=float, default=1.0, help="1 = 1920 wide, 2 = 3840 wide")
     ap.add_argument("--variant", choices=["card", "clean"], default="card")
     ap.add_argument("--fps", type=int, default=60)
@@ -958,10 +1054,11 @@ def main():
         list_tracks(args.gp)
         return
     drop = tuple(int(v) for v in args.drop_strings.split(",") if v.strip())
+    tuning = parse_tuning(args.tuning) if args.tuning else None
     kw = dict(scale=args.scale, variant=args.variant, fps=args.fps,
               preroll=args.preroll, px_per_beat=args.px_per_beat, playhead=args.playhead,
               accent=tuple(int(args.accent.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)))
-    sc = load_score(args.gp, args.track, drop)
+    sc = load_score(args.gp, args.track, drop, tuning)
     r = Renderer(sc, **kw)
     print(f"{sc.track_name}: {len(sc.bars)} bars, {len(sc.beats)} beats, strings {' '.join(sc.tuning)}, "
           f"dropped {sc.dropped} notes; frame {r.W}x{r.H}, {r.total:.3f}s, {r.nframes} frames; "
@@ -991,7 +1088,7 @@ def main():
     import multiprocessing as mp
     import time
     t_start, last = time.time(), 0.0
-    with mp.Pool(args.workers, initializer=_init_worker, initargs=(args.gp, args.track, drop, kw)) as pool:
+    with mp.Pool(args.workers, initializer=_init_worker, initargs=(args.gp, args.track, drop, tuning, kw)) as pool:
         for k, frame in enumerate(pool.imap(_render_frame, range(first, first + nframes), chunksize=4)):
             proc.stdin.write(frame)
             now = time.time()

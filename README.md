@@ -72,6 +72,10 @@ track 2: 'Bass'           4 strings, low->high E A D G        notes per string [
   Suppose a 7-string track only touches the low string in the intro and you want a normal 6-line tab:
   add `--drop-strings 0`. Notes on hidden strings are removed, and the strip shrinks to fit.
   The `notes per string` list shows how much you'd lose.
+- **Relabel the strings** with `--tuning` if you play the tab in a different tuning than it was written in, as long as
+  it has the same intervals (e.g. a tab written in C G D G B D, played tuned 3 semitones down):
+  `--tuning "A E B E G# B"`, listed low to high. Separate names with spaces, commas or dashes; `#`/`♯` and `b`/`♭` both work.
+  Only the labels change; the fret numbers stay the same.
 
 ## 4. Preview a frame
 
@@ -106,6 +110,7 @@ python tabscroll.py mysong.gp --scale 2 --variant clean --out renders/mysong_4k_
 |---|---|---|
 | `--track N` | `0` | Which track to render (see `--list-tracks`). |
 | `--drop-strings 0,1` | none | Hide strings, counted from the lowest string starting at 0. |
+| `--tuning "A E B E G# B"` | from file | Relabel the strings, low to high. Labels only; the fret numbers don't change. |
 | `--scale` | `1` | `1` gives a 1920-wide strip (for 1080p); `2` gives a 3840-wide strip (for 4K). |
 | `--variant` | `card` | `card` puts the tab on a dark rounded backdrop. `clean` shows only the tab with a soft shadow. |
 | `--formats` | `prores,webm` | Any of `prores`, `webm`, `preview` (comma-separated). |
@@ -127,7 +132,7 @@ python tabscroll.py mysong.gp --scale 2 --variant clean --out renders/mysong_4k_
 | `webm` | `*_vp9alpha.webm` | OBS, browsers and web-based editors. Transparent and small (tens of MB). |
 | `preview` | `*_preview.mp4` | Just for looking at: a 16:9 H.264 video with the strip composited on the background. Not transparent. |
 
-The strip is 1920×316 at `--scale 1` or 3840×632 at `--scale 2`. It gets taller if you keep 7+ strings.
+The strip is 1920×322 at `--scale 1` or 3840×644 at `--scale 2`. It gets taller if you keep 7+ strings.
 
 ## 6. Put it in your video
 
@@ -180,6 +185,8 @@ Use the 4K render on 4K timelines. On a 1080p timeline, either render with `--sc
 | `P.M. - - - -┐` / `let ring - - -┐` | Palm mute and let ring spans. |
 | Stems and beams under the tab | Rhythm (8ths, 16ths, dots and rests). |
 | Dimmed notes on the left | Already played. |
+| `BAR 13 / 42` (top left) | Current bar and total bars. |
+| Thin line along the bottom | Progress through the song. |
 
 ## Limitations
 
