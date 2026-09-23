@@ -3,8 +3,8 @@
 Turn a Guitar Pro tab into a single-line tab that scrolls from right to left, for playthrough videos.
 The output is a video with a transparent background, so you can drop it on top of your footage in any editor.
 
-![tabscroll preview, studio theme](docs/preview.png)
-![tabscroll preview, ink theme](docs/preview-ink.png)
+![tabscroll preview, studio theme](docs/preview.webp)
+![tabscroll preview, ink theme](docs/preview-ink.webp)
 
 - **Synced by design.** The tab scrolls at a constant speed, and each note hits the playhead exactly when it's played.
   Line up one point with your recording and the rest of the song stays in sync.
@@ -43,6 +43,12 @@ Try it on the bundled demo:
 ```bash
 python examples/make_demo.py                               # writes examples/demo.gp
 python tabscroll.py examples/demo.gp --still 5              # writes still_005.000.png
+```
+
+The animated previews at the top of this page are the demo too:
+
+```bash
+python tabscroll.py examples/demo.gp --theme ink --out docs/preview-ink --formats webp --start 2.6 --limit 7
 ```
 
 ## 2. Get your tab as a `.gp` file
@@ -116,12 +122,13 @@ python tabscroll.py mysong.gp --scale 2 --variant clean --out renders/mysong_4k_
 | `--scale` | `1` | `1` gives a 1920-wide strip (for 1080p); `2` gives a 3840-wide strip (for 4K). |
 | `--theme` | `studio` | The look: `studio` or `ink`. See [Themes](#themes). |
 | `--variant` | `card` | `card` draws the theme's backdrop behind the tab. `clean` shows only the tab, with a soft shadow. |
-| `--formats` | `prores,webm` | Any of `prores`, `webm`, `preview` (comma-separated). |
+| `--formats` | `prores,webm` | Any of `prores`, `webm`, `preview`, `gif`, `webp` (comma-separated). |
 | `--fps` | `60` | Frame rate. Use 30 if your project is 30 fps and you want smaller files. |
 | `--preroll` | `3.0` | Seconds before bar 1 reaches the playhead. |
 | `--px-per-beat` | `200` | Scroll speed: bigger is faster and more spread out. Try 240–280 for dense 16th-note riffs, 160 for slow songs. |
 | `--playhead` | `0.22` | Playhead position, as a fraction of the width. |
 | `--accent` | per theme | Highlight color, as hex. Defaults to amber `FFB74D` for studio and rose gold `E49E92` for ink. Try `4FD1FF` cyan, `FF5C7A` pink or `9BE564` green. |
+| `--anim-width`, `--anim-fps` | `960`, `30` | Size and frame rate of `gif` / `webp` previews. |
 | `--still T` | | Render a PNG at video time `T` instead of a video. Repeatable. |
 | `--bg image.png` | | Background for `--still` composites and the `preview` MP4. Without it, previews use a plain dark gradient. |
 | `--start S`, `--limit N` | | Render only part of the song (N seconds starting at S), which is handy for quick tests. |
@@ -134,6 +141,8 @@ python tabscroll.py mysong.gp --scale 2 --variant clean --out renders/mysong_4k_
 | `prores` | `*_prores4444.mov` | **Editing.** ProRes 4444 with a true alpha channel, visually lossless. Large (about 1 GB per minute at 1080 width, about 3 GB per minute at 4K). |
 | `webm` | `*_vp9alpha.webm` | OBS, browsers and web-based editors. Transparent and small (tens of MB). |
 | `preview` | `*_preview.mp4` | Just for looking at: a 16:9 H.264 video with the strip composited on the background. Not transparent. |
+| `webp` | `*.webp` | A small looping animated preview on a dark backdrop, for READMEs, chats and socials. Usually 1–2 MB for a few seconds. |
+| `gif` | `*.gif` | The same as an animated GIF, for places that don't take WebP. Much bigger, especially with the ink theme's grain. |
 
 The strip is 1920×322 at `--scale 1` or 3840×644 at `--scale 2`. The ink theme is a little taller (1920×342) because it spaces the strings further apart. Both get taller if you keep 7+ strings.
 

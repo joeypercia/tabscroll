@@ -1582,10 +1582,8 @@ def ffmpeg_cmd(r, args, fmts):
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-nostats",
            "-f", "rawvideo", "-pix_fmt", "bgra", "-s", f"{r.W}x{r.H}", "-r", str(args.fps), "-i", "-"]
     tags = ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
-    if "preview" in fmts:
-        cmd += ["-loop", "1", "-framerate", str(args.fps), "-i", args.bg]
     fc = [f"[0:v]split={len(fmts)}" + "".join(f"[v{i}]" for i in range(len(fmts)))]
-    maps = []
+    maps, next_input = [], 1
     for i, f in enumerate(fmts):
         if f == "prores":
             fc.append(f"[v{i}]scale=out_color_matrix=bt709:out_range=tv,format=yuva444p10le[o{i}]")
@@ -1597,10 +1595,31 @@ def ffmpeg_cmd(r, args, fmts):
                      "-tile-columns", "2", "-deadline", "good", "-cpu-used", "4", "-auto-alt-ref", "0", *tags,
                      "-metadata:s:v:0", "alpha_mode=1", f"{args.out}_vp9alpha.webm"]
         elif f == "preview":
-            fc.append(f"[1:v]format=rgb24[bg];[bg][v{i}]overlay=x=(W-w)/2:y=H-h-{int(40 * args.scale)}"
+            cmd += ["-loop", "1", "-framerate", str(args.fps), "-i", args.bg]
+            fc.append(f"[{next_input}:v]format=rgb24[bg{i}];[bg{i}][v{i}]overlay=x=(W-w)/2:y=H-h-{int(40 * args.scale)}"
                       f":shortest=1:format=auto,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[o{i}]")
             maps += ["-map", f"[o{i}]", "-c:v", "libx264", "-preset", "medium", "-crf", "17", *tags,
                      "-movflags", "+faststart", f"{args.out}_preview.mp4"]
+            next_input += 1
+        elif f in ("gif", "webp"):
+            # a small animated preview (for READMEs, chats, socials) on a soft dark backdrop
+            m = int(24 * args.scale)
+            bw, bh = r.W + 2 * m, r.H + 2 * m
+            cmd += ["-f", "lavfi", "-i", f"gradients=s={bw}x{bh}:r={args.fps}:c0=0x262a33:c1=0x0e0f13"
+                                         f":x0=0:y0=0:x1=0:y1={bh}:speed=0"]
+            # GIF frame delays are whole hundredths of a second: snap the rate so timing stays exact
+            rate = args.anim_fps if f == "webp" else f"100/{max(2, round(100 / args.anim_fps))}"
+            chain = (f"[{next_input}:v][v{i}]overlay=x={m}:y={m}:shortest=1:format=auto,"
+                     f"fps={rate},scale={args.anim_width}:-2:flags=lanczos")
+            if f == "gif":
+                fc.append(chain + f",split[ga{i}][gb{i}];[ga{i}]palettegen=stats_mode=full[pal{i}];"
+                                  f"[gb{i}][pal{i}]paletteuse=dither=sierra2_4a[o{i}]")
+                maps += ["-map", f"[o{i}]", "-loop", "0", f"{args.out}.gif"]
+            else:
+                fc.append(chain + f",format=yuv420p[o{i}]")
+                maps += ["-map", f"[o{i}]", "-c:v", "libwebp_anim", "-lossless", "0", "-quality", "82",
+                         "-loop", "0", f"{args.out}.webp"]
+            next_input += 1
         else:
             raise SystemExit(f"unknown format {f}")
     return cmd + ["-filter_complex", ";".join(fc)] + maps
@@ -1679,7 +1698,9 @@ def main():
     ap.add_argument("--accent", help="highlight colour, hex RGB (default depends on the theme)")
     ap.add_argument("--still", type=float, action="append", help="render PNG stills at these video times")
     ap.add_argument("--out", help="output basename")
-    ap.add_argument("--formats", default="prores,webm", help="comma list of prores,webm,preview")
+    ap.add_argument("--formats", default="prores,webm", help="comma list of prores,webm,preview,gif,webp")
+    ap.add_argument("--anim-width", type=int, default=960, help="width of gif/webp previews")
+    ap.add_argument("--anim-fps", type=int, default=30, help="frame rate of gif/webp previews")
     ap.add_argument("--bg", help="background image for previews / composited stills")
     ap.add_argument("--start", type=float, default=0.0, help="start rendering at this video time")
     ap.add_argument("--limit", type=float, help="render only N seconds")
