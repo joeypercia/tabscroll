@@ -999,18 +999,21 @@ def _smoothstep(v):
 
 
 class InkRenderer(Renderer):
-    """Rugged, hand-made look: a dry-brush ink stroke for a backdrop, typewriter
-    fret numbers, pen-drawn lines, handwritten notes, ink-stamp hits and grain."""
+    """Hand-made look: a soft dry-brush ink stroke for a backdrop, typewriter
+    fret numbers, pen-drawn lines, handwritten notes and rose-gold ink stamps."""
 
-    DEFAULT_ACCENT = (228, 98, 58)          # burnt vermilion
+    DEFAULT_ACCENT = (228, 158, 146)        # rose gold
 
     def _style(self, accent):
         s = self.s
-        self.ink = (236, 228, 212)          # bone
+        self.ink = (240, 231, 225)          # warm cream
         self.accent = accent or self.DEFAULT_ACCENT
-        self.dark = (28, 19, 13)
+        # a metallic ramp around the accent: champagne highlight to deep rose
+        self.accent_hi = tuple(int(round(a + (b - a) * 0.55)) for a, b in zip(self.accent, (255, 240, 232)))
+        self.accent_lo = tuple(int(round(a + (b - a) * 0.45)) for a, b in zip(self.accent, (150, 78, 96)))
+        self.dark = (44, 22, 30)            # plum ink for digits on a stamp
         self.string_a = 0.38 if self.variant == "card" else 0.5
-        te, hand = "SpecialElite-Regular.ttf", "Caveat.ttf"
+        te, hand = "CourierPrime-Bold.ttf", "Caveat.ttf"
         self.f_fret = load_font(te, 22 * s)
         self.f_small = load_font(hand, 16 * s)
         self.f_tech = load_font(hand, 19 * s)
@@ -1024,8 +1027,8 @@ class InkRenderer(Renderer):
         self.f_smufl_sm = load_font("Bravura.otf", 22 * s)
         self.f_acc = load_font("Bravura.otf", 19 * s)
         self.cap = cap_height(self.f_fret)
-        self.rough = skia.DiscretePathEffect.Make(7 * s, 0.5 * s, 3)
-        self.rough_fill = skia.DiscretePathEffect.Make(2.5 * s, 0.8 * s, 5)
+        self.rough = skia.DiscretePathEffect.Make(9 * s, 0.3 * s, 3)
+        self.rough_fill = skia.DiscretePathEffect.Make(3 * s, 0.35 * s, 5)
 
     def pen(self, color=None, a=1.0, stroke=None, cap=None, shader=None):
         p = mkpaint(color, a, stroke=stroke, cap=cap, shader=shader)
@@ -1098,8 +1101,8 @@ class InkRenderer(Renderer):
         y = np.arange(H, dtype=np.float32)[:, None]
         x = np.arange(W, dtype=np.float32)[None, :]
         swell = 3 * s * _fbm(W, [700 * s, 260 * s], rng)            # the stroke thickens and thins
-        top = self.card_t + 7 * s - swell + 3 * s * _fbm(W, [120 * s, 35 * s, 10 * s], rng)
-        bot = self.card_b - 7 * s + swell + 3 * s * _fbm(W, [110 * s, 32 * s, 9 * s], rng)
+        top = self.card_t + 7 * s - swell + 1.6 * s * _fbm(W, [120 * s, 35 * s, 10 * s], rng)
+        bot = self.card_b - 7 * s + swell + 1.6 * s * _fbm(W, [110 * s, 32 * s, 9 * s], rng)
         cov_y = (np.clip((y - top[None, :]) / (1.3 * s) + 0.5, 0, 1)
                  * np.clip((bot[None, :] - y) / (1.3 * s) + 0.5, 0, 1))
 
@@ -1108,9 +1111,9 @@ class InkRenderer(Renderer):
         yn = (np.arange(H) - (self.card_t + self.card_b) / 2) / (self.card_b - self.card_t)
         start = (self.card_l + 4 * s + 10 * s * yn + 6 * s * (yn * 2) ** 2      # the brush lands at a slant
                  + 8 * s * (0.5 + 0.5 * _fbm(H, [70 * s, 20 * s], rng))
-                 + 14 * s * np.maximum(0, bl) ** 1.4)
+                 + 7 * s * np.maximum(0, bl) ** 1.4)
         end = (self.card_r - 6 * s - 26 * s * (0.5 + 0.5 * _fbm(H, [70 * s, 20 * s], rng))
-               - 150 * s * np.maximum(0, br) ** 1.6)
+               - 80 * s * np.maximum(0, br) ** 1.6)
         ramp_l = _blur1d((8 + 16 * rng.random(H)) * s, 2.0 * s)
         ramp_r = _blur1d((60 + 140 * rng.random(H)) * s, 2.0 * s)
         cov_x = (np.clip((x - start[:, None]) / ramp_l[:, None], 0, 1) ** 0.55
@@ -1125,17 +1128,17 @@ class InkRenderer(Renderer):
 
         dist = np.minimum(y - top[None, :], bot[None, :] - y)
         near = np.exp(-np.maximum(dist, 0) / (6 * s))
-        dry = 1 - 0.6 * near * np.clip(streak, 0, None) / 2.5          # ragged, dry edges
+        dry = 1 - 0.3 * near * np.clip(streak, 0, None) / 2.5          # slightly dry edges
         body = 0.86
         alpha = np.clip(cov_x * cov_y * body * dry, 0, 0.93)
         # ink wicking a few pixels past the edge, very faint
         wick_t = top - (2 + 4 * (0.5 + 0.5 * _fbm(W, [60 * s, 14 * s], rng))) * s
         wick_b = bot + (2 + 4 * (0.5 + 0.5 * _fbm(W, [60 * s, 14 * s], rng))) * s
         wick = (np.clip((y - wick_t[None, :]) / (2 * s), 0, 1) * np.clip((wick_b[None, :] - y) / (2 * s), 0, 1)
-                * cov_x * 0.22 * (0.7 + 0.3 * np.clip(streak, -1, 1)))
+                * cov_x * 0.14 * (0.7 + 0.3 * np.clip(streak, -1, 1)))
         alpha = np.maximum(alpha, wick)
         pool = 5 * _fbm(W, [400 * s, 130 * s], rng)[None, :]         # ink pooling: gentle tone shifts
-        rgb = np.stack([17 + 6 * streak + pool, 15 + 5.2 * streak + pool * 0.9, 13 + 4.4 * streak + pool * 0.8], -1)
+        rgb = np.stack([22 + 4 * streak + pool, 16 + 3.2 * streak + pool * 0.8, 20 + 3.8 * streak + pool], -1)
         out = np.dstack([np.clip(rgb, 0, 255), alpha[..., None] * 255])
         return np.ascontiguousarray(out.round().astype(np.uint8))
 
@@ -1143,7 +1146,7 @@ class InkRenderer(Renderer):
     def _finish(self, out, master, lift):
         s, tv = self.s, self._tv
         g = self.grain[int(tv * 24) % len(self.grain)]
-        out[..., :3] += (0.018 * g)[..., None] * out[..., 3:4]
+        out[..., :3] += (0.007 * g)[..., None] * out[..., 3:4]
         k_in, k_out = min(1.0, tv / 1.0), min(1.0, (self.total - tv) / 1.0)
         if k_in < 1.0 or k_out < 1.0:
             soft, travel = 70 * s, self.W + 380 * s
@@ -1177,8 +1180,8 @@ class InkRenderer(Renderer):
             return
         rng = random.Random(_seed(n.beat.t0, n.string))
         c.save()
-        c.rotate(rng.uniform(-4.5, 4.5), x, y)
-        c.translate(0, rng.uniform(-0.8, 0.8) * self.s)
+        c.rotate(rng.uniform(-2.0, 2.0), x, y)
+        c.translate(0, rng.uniform(-0.5, 0.5) * self.s)
         super().draw_fret_text(c, n, x, y, color, a, font)
         c.restore()
 
@@ -1220,7 +1223,7 @@ class InkRenderer(Renderer):
         path = skia.Path()
         for j in range(22):
             th = 2 * math.pi * j / 22
-            wob = 1 + 0.07 * math.sin(3 * th + ph) + rng.uniform(-0.05, 0.05)
+            wob = 1 + 0.04 * math.sin(3 * th + ph) + rng.uniform(-0.02, 0.02)
             px, py = rx * wob * math.cos(th), ry * wob * math.sin(th)
             X = x + px * math.cos(rot) - py * math.sin(rot)
             Y = y + px * math.sin(rot) + py * math.cos(rot)
@@ -1229,13 +1232,13 @@ class InkRenderer(Renderer):
             else:
                 path.lineTo(X, Y)
         path.close()
-        c.drawPath(path, mkpaint(self.accent, 0.35 * fl, blur=3 * s))           # ink bleed
-        p = mkpaint(self.accent, 0.95 * fl)
+        c.drawPath(path, mkpaint(self.accent_hi, 0.45 * fl, blur=5 * s))        # soft glow
+        metal = skia.GradientShader.MakeLinear(
+            [skia.Point(x, y - ry), skia.Point(x, y + ry)],
+            [rgba(self.accent_hi, fl), rgba(self.accent, fl), rgba(self.accent_lo, fl)], [0, 0.5, 1])
+        p = mkpaint(shader=metal)
         p.setPathEffect(self.rough_fill)
         c.drawPath(path, p)
-        for _ in range(5):                                                     # paper showing through
-            c.drawCircle(x + rng.uniform(-0.75, 0.75) * rx, y + rng.uniform(-0.7, 0.7) * ry,
-                         rng.uniform(0.5, 1.2) * s, mkpaint(self.ink, 0.45 * fl))
 
     def draw_live(self, c, t, vis):
         for b in vis:
@@ -1277,9 +1280,13 @@ class InkRenderer(Renderer):
 
     def draw_playhead(self, c, t):
         s = self.s
-        c.drawPath(self.ph_path, mkpaint(self.accent, 0.22, blur=3.5 * s))
+        c.drawPath(self.ph_path, mkpaint(self.accent_hi, 0.30, blur=4.5 * s))
+        b = self.ph_path.getBounds()
+        metal = skia.GradientShader.MakeLinear(
+            [skia.Point(0, b.top()), skia.Point(0, b.bottom())],
+            [rgba(self.accent_hi, 0.98), rgba(self.accent, 0.95), rgba(self.accent_lo, 0.95)], [0, 0.45, 1])
         for path in (self.ph_path, self.ph_tri):
-            p = mkpaint(self.accent, 0.95)
+            p = mkpaint(shader=metal)
             p.setPathEffect(self.rough_fill)
             c.drawPath(path, p)
 

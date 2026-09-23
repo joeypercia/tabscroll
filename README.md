@@ -12,7 +12,7 @@ The output is a video with a transparent background, so you can drop it on top o
   palm mute and let ring lines, bar numbers, tempo, time signature, and rhythm stems and beams.
 - **Live feedback.** Each note flashes as it's played. Held and let-ring notes draw a sustain line that lights
   up while they ring, and notes already played are dimmed.
-- **Two looks.** `studio` is clean and polished. `ink` is rugged and hand-made. See [Themes](#themes).
+- **Two looks.** `studio` is clean and polished. `ink` is hand-made, with rose-gold highlights. See [Themes](#themes).
 - **Editor-ready output.** ProRes 4444 with alpha for Premiere, Resolve, Final Cut and After Effects,
   WebM VP9 with alpha for OBS and the web, and an MP4 preview.
 
@@ -36,7 +36,7 @@ Installing ffmpeg:
 | macOS | `brew install ffmpeg` |
 | Linux | `sudo apt install ffmpeg` (or your distro's package) |
 
-Check it works with `ffmpeg -version`. The fonts (Inter, Bravura, Special Elite and Caveat) come with the repo, so there's nothing else to install.
+Check it works with `ffmpeg -version`. The fonts (Inter, Bravura, Courier Prime and Caveat) come with the repo, so there's nothing else to install.
 
 Try it on the bundled demo:
 
@@ -121,7 +121,7 @@ python tabscroll.py mysong.gp --scale 2 --variant clean --out renders/mysong_4k_
 | `--preroll` | `3.0` | Seconds before bar 1 reaches the playhead. |
 | `--px-per-beat` | `200` | Scroll speed: bigger is faster and more spread out. Try 240–280 for dense 16th-note riffs, 160 for slow songs. |
 | `--playhead` | `0.22` | Playhead position, as a fraction of the width. |
-| `--accent` | per theme | Highlight color, as hex. Defaults to amber `FFB74D` for studio and burnt vermilion `E4623A` for ink. Try `4FD1FF` cyan, `FF5C7A` pink or `9BE564` green. |
+| `--accent` | per theme | Highlight color, as hex. Defaults to amber `FFB74D` for studio and rose gold `E49E92` for ink. Try `4FD1FF` cyan, `FF5C7A` pink or `9BE564` green. |
 | `--still T` | | Render a PNG at video time `T` instead of a video. Repeatable. |
 | `--bg image.png` | | Background for `--still` composites and the `preview` MP4. Without it, previews use a plain dark gradient. |
 | `--start S`, `--limit N` | | Render only part of the song (N seconds starting at S), which is handy for quick tests. |
@@ -144,14 +144,14 @@ Pick one with `--theme`. Both work with `--variant clean`, `--accent` and every 
 | Theme | Look |
 |---|---|
 | `studio` (default) | A dark glass card, Inter numbers, glossy amber note chips, comet sustain lines and a soft light behind the playhead. Clean and polished. |
-| `ink` | A dry-brush ink stroke with ragged edges and film grain, typewriter fret numbers struck slightly off-square, pen-drawn strings and stems, handwritten notes (P.M., let ring, bar numbers), a marker-stroke playhead and ink stamps for note hits. It opens and closes with a brush wipe. |
+| `ink` | A soft dry-brush stroke of plum-black ink with a light film grain, typewriter fret numbers (Courier Prime) set slightly off-square, pen-drawn strings and stems, handwritten notes (P.M., let ring, bar numbers), and rose-gold highlights: a metallic marker for the playhead and ink stamps for note hits. It opens and closes with a brush wipe. |
 
 ```bash
 python tabscroll.py mysong.gp --theme ink --out renders/mysong_ink --formats prores
 ```
 
 **Size note:** ProRes compresses every frame separately, so the ink theme's texture and grain make its files
-roughly 3× larger than studio's (about 3 GB per minute at 1080 width). The WebM output stays small.
+roughly 2–3× larger than studio's (a few GB per minute at 1080 width). The WebM output stays small.
 
 Adding a theme: subclass `Renderer` in `tabscroll.py`, override the hooks you need (`_style` for colors
 and fonts, `_build_backdrop`, `pen`, `draw_live`, `draw_playhead`, `draw_hud`, `_finish`), then register
@@ -198,7 +198,7 @@ Use the 4K render on 4K timelines. On a 1080p timeline, either render with `--sc
 
 | On screen | Meaning |
 |---|---|
-| Vertical line (amber, or a rust marker in ink) | The playhead: notes are played as they cross it. |
+| Vertical line (amber, or a rose-gold marker in ink) | The playhead: notes are played as they cross it. |
 | Chip flash (ink: a stamp) | A note being struck. |
 | Line along a string | The note sustains (tied, let ring, or longer than a beat). It lights up while it rings. |
 | `(5)` in parentheses | A tie carried into a new bar, so you can still see which fret is held. |
@@ -231,6 +231,6 @@ only includes what tabscroll reads.
 
 ## License
 
-Code: MIT. Fonts: [Inter](https://github.com/rsms/inter), [Bravura](https://github.com/steinbergmedia/bravura) and
-[Caveat](https://github.com/googlefonts/caveat) under the SIL Open Font License 1.1, and
-[Special Elite](https://fonts.google.com/specimen/Special+Elite) under the Apache License 2.0 (see `fonts/`).
+Code: MIT. Fonts: [Inter](https://github.com/rsms/inter), [Bravura](https://github.com/steinbergmedia/bravura),
+[Courier Prime](https://github.com/quoteunquoteapps/CourierPrime) and [Caveat](https://github.com/googlefonts/caveat),
+all under the SIL Open Font License 1.1 (see `fonts/`).
