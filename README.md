@@ -3,7 +3,7 @@
 Turn a Guitar Pro tab into a single-line tab that scrolls from right to left, for playthrough videos.
 The output is a video with a transparent background, so you can drop it on top of your footage in any editor.
 
-![tabscroll preview: the studio theme on top, the ink theme below](docs/preview.webp)
+![tabscroll preview: the studio theme on top, the ink theme below](docs/preview-themes.webp)
 
 <sub>Top: the `studio` theme. Bottom: the `ink` theme. Both play the bundled demo tab.</sub>
 
