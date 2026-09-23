@@ -1184,6 +1184,7 @@ class InkRenderer(Renderer):
 
     # -- faint botanical engraving on the ink stroke --------------------------------
     ROSE_GOLD, BLUSH, PEARL = (228, 158, 146), (244, 192, 198), (228, 224, 230)
+    FLORAL_STRENGTH = 0.35                  # overall opacity of the floral layer
 
     def _botanicals(self, c, rng):
         """Flowering sprays drawn like a fine engraving, laid onto the ink:
@@ -1217,7 +1218,7 @@ class InkRenderer(Renderer):
         wy = np.interp(ys, [self.y0 - 22 * s, self.y0 - 4 * s, self.yb + 4 * s, self.yb + 22 * s],
                        [1.0, 0.38, 0.38, 1.0])
         wx = np.interp(np.arange(W, dtype=np.float32), [self.lab_x + 10 * s, self.lab_x + 80 * s], [0.3, 1.0])
-        layer = buf.astype(np.float32) * (wy[:, None] * wx[None, :])[..., None]
+        layer = buf.astype(np.float32) * (self.FLORAL_STRENGTH * wy[:, None] * wx[None, :])[..., None]
         img = skia.Image.fromarray(np.ascontiguousarray(layer.round().clip(0, 255).astype(np.uint8)),
                                    colorType=skia.kBGRA_8888_ColorType, alphaType=skia.kPremul_AlphaType)
         c.drawImage(img, 0, 0, skia.SamplingOptions(), mkpaint(blend=skia.BlendMode.kSrcATop))
