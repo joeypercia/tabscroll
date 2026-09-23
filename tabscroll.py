@@ -321,7 +321,7 @@ class Renderer:
         self.preroll, self.postroll = preroll, postroll
         s = scale
         self.W = int(round(width * s))
-        self.sp = 34 * s
+        self.sp = self.STRING_SPACING * s
         self.y0 = 80 * s
         self.ys = [self.y0 + i * self.sp for i in range(sc.nstrings)]
         self.yb = self.ys[-1]
@@ -350,11 +350,15 @@ class Renderer:
         self.buf_a = np.zeros((self.H, self.W, 4), np.uint8)
         self.buf_b = np.zeros((self.H, self.W, 4), np.uint8)
         self.buf_c = np.zeros((self.H, self.W, 4), np.uint8)
+        self.surf_d = skia.Surface(self.W, self.H)      # ambient layer behind the tab (optional)
+        self.buf_d = np.zeros((self.H, self.W, 4), np.uint8)
+        self._ambient = False
         self.bar_t0 = [b[2] for b in sc.bars]
         self._build_static()
 
     # -- theme hooks (override these in a theme subclass) ------------------------
     DEFAULT_ACCENT = (255, 183, 77)
+    STRING_SPACING = 34
 
     def _style(self, accent):
         """Colours and fonts."""
@@ -386,6 +390,10 @@ class Renderer:
         paint.setPathEffect(skia.DashPathEffect.Make([on, off], 0))
         return paint
 
+    def draw_ambient(self, c, t):
+        """Moving decoration behind the tab. Return True if anything was drawn."""
+        return False
+
     def _finish(self, out, master, lift):
         """Last touches on the premultiplied frame: slide-in and fade."""
         if lift > 0.02:
@@ -405,7 +413,7 @@ class Renderer:
 
     def chip_rect(self, n, x, y, grow=0.0):
         w = max(self.text_w(self.f_fret, n.label) + 11 * self.s, 21 * self.s) + grow
-        h = 22 * self.s + grow
+        h = max(22 * self.s, self.cap + 7 * self.s) + grow
         return skia.Rect.MakeXYWH(x - w / 2, y - h / 2, w, h)
 
     def half_w(self, n):
@@ -535,6 +543,11 @@ class Renderer:
         c = self.surf_c.getCanvas()
         c.clear(skia.ColorTRANSPARENT)
         self.draw_hud(c, t)
+        c = self.surf_d.getCanvas()
+        c.clear(skia.ColorTRANSPARENT)
+        self._ambient = self.draw_ambient(c, t)
+        if self._ambient:
+            self.surf_d.readPixels(self.info, self.buf_d)
 
         self.surf_a.readPixels(self.info, self.buf_a)
         self.surf_b.readPixels(self.info, self.buf_b)
@@ -551,7 +564,12 @@ class Renderer:
         sh[dy:] = sh[:-dy].copy()
         sh[:dy] = 0
         sh *= self.shadow_a
-        out = self.static * (1.0 - sh)[..., None]
+        base = self.static
+        if self._ambient:                          # lives on the backdrop only
+            D = self.buf_d.astype(np.float32) * (1 / 255.0)
+            D *= np.clip(self.static[..., 3:4] / 0.8, 0.0, 1.0)
+            base = self.static * (1.0 - D[..., 3:4]) + D
+        out = base * (1.0 - sh)[..., None]
         out[..., 3] += sh
         out *= 1.0 - A[..., 3:4]
         out += A
@@ -998,15 +1016,34 @@ def _smoothstep(v):
     return v * v * (3 - 2 * v)
 
 
+def _petal_path(cx, cy, length, width, angle, notch=0.0):
+    """A teardrop petal (or leaf) growing from (cx, cy) along `angle`."""
+    ca, sa = math.cos(angle), math.sin(angle)
+
+    def P(u, v):
+        return cx + u * ca - v * sa, cy + u * sa + v * ca
+
+    p = skia.Path()
+    p.moveTo(*P(0, 0))
+    p.cubicTo(*P(length * 0.25, width * 0.9), *P(length * 0.8, width), *P(length, width * 0.2 if notch else 0))
+    if notch:
+        p.lineTo(*P(length * (1 - notch), 0))
+        p.lineTo(*P(length, -width * 0.2))
+    p.cubicTo(*P(length * 0.8, -width), *P(length * 0.25, -width * 0.9), *P(0, 0))
+    p.close()
+    return p
+
+
 class InkRenderer(Renderer):
     """Hand-made look: a soft dry-brush ink stroke for a backdrop, typewriter
     fret numbers, pen-drawn lines, handwritten notes and rose-gold highlights."""
 
     DEFAULT_ACCENT = (228, 158, 146)        # rose gold
+    STRING_SPACING = 38                     # room for bigger numbers
 
     def _style(self, accent):
         s = self.s
-        self.ink = (240, 231, 225)          # warm cream
+        self.ink = (248, 241, 236)          # warm cream
         self.accent = accent or self.DEFAULT_ACCENT
         # a metallic ramp around the accent: champagne highlight to deep rose
         self.accent_hi = tuple(int(round(a + (b - a) * 0.55)) for a, b in zip(self.accent, (255, 240, 232)))
@@ -1014,14 +1051,14 @@ class InkRenderer(Renderer):
         self.dark = (44, 22, 30)            # plum ink for digits on a stamp
         self.string_a = 0.38 if self.variant == "card" else 0.5
         te, hand = "CourierPrime-Bold.ttf", "Caveat.ttf"
-        self.f_fret = load_font(te, 22 * s)
-        self.f_small = load_font(hand, 16 * s)
-        self.f_tech = load_font(hand, 19 * s)
-        self.f_hp = load_font(hand, 15 * s)
-        self.f_lab = load_font(te, 15 * s)
-        self.f_sig = load_font(te, 50 * s)
+        self.f_fret = load_font(te, 28 * s)
+        self.f_small = load_font(hand, 17 * s)
+        self.f_tech = load_font(hand, 20 * s)
+        self.f_hp = load_font(hand, 17 * s)
+        self.f_lab = load_font(te, 17 * s)
+        self.f_sig = load_font(te, 56 * s)
         self.f_tempo = load_font(hand, 19 * s)
-        self.f_ghost = load_font(te, 15 * s)
+        self.f_ghost = load_font(te, 17 * s)
         self.f_hud = load_font(hand, 19 * s)
         self.f_smufl = load_font("Bravura.otf", 28 * s)
         self.f_smufl_sm = load_font("Bravura.otf", 22 * s)
@@ -1093,6 +1130,8 @@ class InkRenderer(Renderer):
         img = self._brush_stroke(np.random.default_rng(7))   # own stream: same stroke for every tab
         c.drawImage(skia.Image.fromarray(img, colorType=skia.kRGBA_8888_ColorType,
                                          alphaType=skia.kUnpremul_AlphaType), 0, 0)
+        self._botanicals(c, random.Random(11))
+        self._petals = self._petal_set(random.Random(5))
 
     def _brush_stroke(self, rng):
         """One wide stroke of ink: firm where the brush lands on the left,
@@ -1142,6 +1181,174 @@ class InkRenderer(Renderer):
         out = np.dstack([np.clip(rgb, 0, 255), alpha[..., None] * 255])
         return np.ascontiguousarray(out.round().astype(np.uint8))
 
+
+    # -- faint botanical line art --------------------------------------------------
+    ROSE_GOLD, BLUSH, PEARL = (228, 158, 146), (244, 192, 198), (228, 224, 230)
+
+    def _ink_paint(self, color, a, stroke=None):
+        """Paint that only lands on the ink stroke (SrcATop keeps the stroke's own alpha)."""
+        return mkpaint(color, a, stroke=stroke, blend=skia.BlendMode.kSrcATop)
+
+    def _botanicals(self, c, rng):
+        s, W = self.s, self.W
+        x0, x1 = self.card_l + 60 * s, self.card_r - 40 * s
+        # a vine along the top margin and a sparser one along the bottom
+        self._vine(c, rng, x0, x1, self.card_t + 16 * s, 5 * s, leaf_every=64 * s, a=1.0)
+        self._vine(c, rng, x0 + 90 * s, x1, self.stem_bot + 4 * s, 4 * s, leaf_every=96 * s, a=0.7)
+        # large, very faint roses behind the staff, kept away from the playhead
+        mid = (self.y0 + self.yb) / 2
+        for fx, dy, r in ((0.07, 0.30, 58), (0.44, -0.25, 64), (0.66, 0.34, 52), (0.9, -0.2, 60)):
+            cx = W * fx + rng.uniform(-30, 30) * s
+            cy = mid + dy * (self.yb - self.y0) + rng.uniform(-8, 8) * s
+            self._rose(c, rng, cx, cy, r * s, 0.075)
+        # a few loose petals resting on the stroke
+        for _ in range(9):
+            px, py = rng.uniform(x0, x1), rng.uniform(self.card_t + 12 * s, self.card_b - 12 * s)
+            col = rng.choice((self.ROSE_GOLD, self.BLUSH, self.PEARL))
+            path = _petal_path(px, py, rng.uniform(6, 10) * s, rng.uniform(2.5, 4) * s, rng.uniform(0, 2 * math.pi))
+            c.drawPath(path, self._ink_paint(col, 0.07))
+            c.drawPath(path, self._ink_paint(col, 0.14, stroke=0.8 * s))
+
+    def _vine(self, c, rng, x0, x1, y0, amp, leaf_every, a):
+        s = self.s
+        p1, p2 = rng.uniform(0, 6.28), rng.uniform(0, 6.28)
+
+        def y_at(x):
+            return y0 + amp * (0.65 * math.sin(x / (170 * s) + p1) + 0.35 * math.sin(x / (61 * s) + p2))
+
+        stem = skia.Path()
+        xs = np.arange(x0, x1, 4 * s)
+        stem.moveTo(float(xs[0]), y_at(xs[0]))
+        for x in xs[1:]:
+            stem.lineTo(float(x), y_at(x))
+        c.drawPath(stem, self._ink_paint(self.ROSE_GOLD, 0.20 * a, stroke=1.0 * s))
+
+        x, side, k = x0 + leaf_every * 0.5, 1, 0
+        while x < x1 - 20 * s:
+            y = y_at(x)
+            tangent = math.atan2(y_at(x + 2 * s) - y_at(x - 2 * s), 4 * s)
+            ang = tangent - side * rng.uniform(0.7, 1.1)
+            length = rng.uniform(10, 14) * s
+            leaf = _petal_path(x, y, length, length * 0.3, ang)
+            c.drawPath(leaf, self._ink_paint(self.PEARL, 0.05 * a))
+            c.drawPath(leaf, self._ink_paint(self.PEARL, 0.17 * a, stroke=0.9 * s))
+            rib = skia.Path()
+            rib.moveTo(x, y)
+            rib.lineTo(x + 0.75 * length * math.cos(ang), y + 0.75 * length * math.sin(ang))
+            c.drawPath(rib, self._ink_paint(self.PEARL, 0.12 * a, stroke=0.6 * s))
+            if k % 4 == 2:                          # a small blossom now and then
+                bx = x + side * rng.uniform(4, 9) * s * math.cos(tangent + math.pi / 2)
+                by = y + side * rng.uniform(4, 9) * s * math.sin(tangent + math.pi / 2)
+                self._blossom(c, bx, by, rng.uniform(6.5, 9) * s, rng.uniform(0, 6.28), a)
+            elif k % 5 == 4:                        # a curling tendril
+                self._tendril(c, rng, x, y, tangent + side * 1.2, a)
+            x += leaf_every * rng.uniform(0.75, 1.25)
+            side, k = -side, k + 1
+
+    def _blossom(self, c, cx, cy, r, rot, a):
+        for j in range(5):
+            petal = _petal_path(cx, cy, r, r * 0.42, rot + j * 2 * math.pi / 5, notch=0.14)
+            c.drawPath(petal, self._ink_paint(self.BLUSH, 0.08 * a))
+            c.drawPath(petal, self._ink_paint(self.BLUSH, 0.22 * a, stroke=0.8 * self.s))
+        c.drawCircle(cx, cy, r * 0.14, self._ink_paint(self.ROSE_GOLD, 0.35 * a))
+
+    def _tendril(self, c, rng, x, y, ang, a):
+        s = self.s
+        path = skia.Path()
+        path.moveTo(x, y)
+        r, th = 9 * s, ang
+        cx, cy = x, y
+        for _ in range(40):
+            th += 0.16
+            r *= 0.955
+            cx += r * 0.16 * math.cos(th)
+            cy += r * 0.16 * math.sin(th)
+            path.lineTo(cx, cy)
+        c.drawPath(path, self._ink_paint(self.ROSE_GOLD, 0.16 * a, stroke=0.8 * s))
+
+    def _rose(self, c, rng, cx, cy, r, a):
+        """A rose as a sketch: spiral bud, overlapping cupped petals, two leaves."""
+        s = self.s
+        line = self._ink_paint(self.ROSE_GOLD, a, stroke=1.1 * s)
+        rot = rng.uniform(0, 2 * math.pi)
+        # soft blush glow instead of a hard disc
+        glow = skia.GradientShader.MakeRadial(skia.Point(cx, cy), r * 1.05,
+                                              [rgba(self.BLUSH, a * 0.5), rgba(self.BLUSH, 0)], [0, 1])
+        gp = mkpaint(shader=glow, blend=skia.BlendMode.kSrcATop)
+        c.drawCircle(cx, cy, r * 1.05, gp)
+        # two leaves tucked behind
+        for side in (-1, 1):
+            ang = rot + math.pi / 2 + side * 0.65
+            bx, by = cx + 0.62 * r * math.cos(ang), cy + 0.62 * r * math.sin(ang)
+            leaf = _petal_path(bx, by, 0.95 * r, 0.3 * r, ang)
+            c.drawPath(leaf, self._ink_paint(self.PEARL, a * 0.35))
+            c.drawPath(leaf, self._ink_paint(self.PEARL, a * 0.9, stroke=0.9 * s))
+            rib = skia.Path()
+            rib.moveTo(bx, by)
+            rib.lineTo(bx + 0.72 * r * math.cos(ang), by + 0.72 * r * math.sin(ang))
+            c.drawPath(rib, self._ink_paint(self.PEARL, a * 0.6, stroke=0.6 * s))
+        # three layers of cupped petals, each pushed off-centre so they overlap
+        for li, (rad, n, off) in enumerate(((1.0, 5, 0.34), (0.7, 4, 0.3), (0.45, 3, 0.26))):
+            for k in range(n):
+                mid = rot + li * 0.7 + k * 2 * math.pi / n + rng.uniform(-0.2, 0.2)
+                span = 2 * math.pi / n * 1.35
+                pr = r * rad
+                ox, oy = cx + off * pr * math.cos(mid), cy + off * pr * math.sin(mid)
+                petal = skia.Path()
+                for q in range(25):
+                    u = q / 24
+                    th = mid - span / 2 + u * span
+                    rho = pr * 0.62 * (1 + 0.22 * math.sin(math.pi * u))
+                    px, py = ox + rho * math.cos(th), oy + rho * math.sin(th)
+                    if q == 0:
+                        petal.moveTo(px, py)
+                    else:
+                        petal.lineTo(px, py)
+                end = mid + span / 2                     # the petal edge curls inward
+                petal.lineTo(ox + pr * 0.48 * math.cos(end - 0.28), oy + pr * 0.48 * math.sin(end - 0.28))
+                c.drawPath(petal, line)
+        # the bud
+        spiral = skia.Path()
+        for q in range(71):
+            u = q / 70
+            th = rot + u * 2.2 * 2 * math.pi
+            rr = r * (0.04 + 0.2 * u)
+            px, py = cx + rr * math.cos(th), cy + rr * math.sin(th)
+            if q == 0:
+                spiral.moveTo(px, py)
+            else:
+                spiral.lineTo(px, py)
+        c.drawPath(spiral, line)
+
+    # -- petals drifting slowly across the stroke ----------------------------------------
+    def _petal_set(self, rng):
+        s = self.s
+        out = []
+        for _ in range(6):
+            out.append(dict(
+                x0=rng.uniform(0, self.W + 200 * s), y0=rng.uniform(self.card_t + 18 * s, self.card_b - 18 * s),
+                vx=-rng.uniform(14, 30) * s, sway=rng.uniform(5, 11) * s, period=rng.uniform(3.5, 6.5),
+                phase=rng.uniform(0, 6.28), spin=rng.uniform(-0.6, 0.6), size=rng.uniform(7, 11) * s,
+                color=rng.choice((self.ROSE_GOLD, self.BLUSH, self.BLUSH, self.PEARL)), alpha=rng.uniform(0.16, 0.24)))
+        return out
+
+    def draw_ambient(self, c, t):
+        if self.variant != "card":
+            return False
+        s, tv = self.s, self._tv
+        span = self.W + 200 * s
+        for pt in self._petals:
+            x = (pt["x0"] + pt["vx"] * tv) % span - 100 * s
+            y = pt["y0"] + pt["sway"] * math.sin(2 * math.pi * tv / pt["period"] + pt["phase"])
+            ang = pt["phase"] + pt["spin"] * tv
+            # tumbling: the petal's apparent width breathes as it turns
+            w = pt["size"] * (0.25 + 0.2 * abs(math.sin(tv * 1.3 + pt["phase"])))
+            bx, by = x - 0.5 * pt["size"] * math.cos(ang), y - 0.5 * pt["size"] * math.sin(ang)
+            path = _petal_path(bx, by, pt["size"], w, ang)
+            c.drawPath(path, mkpaint(pt["color"], pt["alpha"]))
+            c.drawPath(path, mkpaint(pt["color"], pt["alpha"] * 1.3, stroke=0.7 * s))
+        return True
+
     # -- per-frame finish: film grain and a brush-wipe in/out ---------------------
     def _finish(self, out, master, lift):
         s, tv = self.s, self._tv
@@ -1180,8 +1387,8 @@ class InkRenderer(Renderer):
             return
         rng = random.Random(_seed(n.beat.t0, n.string))
         c.save()
-        c.rotate(rng.uniform(-2.0, 2.0), x, y)
-        c.translate(0, rng.uniform(-0.5, 0.5) * self.s)
+        c.rotate(rng.uniform(-0.8, 0.8), x, y)
+        c.translate(0, rng.uniform(-0.3, 0.3) * self.s)
         super().draw_fret_text(c, n, x, y, color, a, font)
         c.restore()
 

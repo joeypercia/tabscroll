@@ -135,7 +135,7 @@ python tabscroll.py mysong.gp --scale 2 --variant clean --out renders/mysong_4k_
 | `webm` | `*_vp9alpha.webm` | OBS, browsers and web-based editors. Transparent and small (tens of MB). |
 | `preview` | `*_preview.mp4` | Just for looking at: a 16:9 H.264 video with the strip composited on the background. Not transparent. |
 
-The strip is 1920×322 at `--scale 1` or 3840×644 at `--scale 2`. It gets taller if you keep 7+ strings.
+The strip is 1920×322 at `--scale 1` or 3840×644 at `--scale 2`. The ink theme is a little taller (1920×342) because it spaces the strings further apart. Both get taller if you keep 7+ strings.
 
 ## Themes
 
@@ -144,7 +144,7 @@ Pick one with `--theme`. Both work with `--variant clean`, `--accent` and every 
 | Theme | Look |
 |---|---|
 | `studio` (default) | A dark glass card, Inter numbers, glossy amber note chips, comet sustain lines and a soft light behind the playhead. Clean and polished. |
-| `ink` | A soft dry-brush stroke of plum-black ink with a light film grain, typewriter fret numbers (Courier Prime) set slightly off-square, pen-drawn strings and stems, handwritten notes (P.M., let ring, bar numbers), and rose-gold highlights: a metallic marker for the playhead and ink stamps for note hits. It opens and closes with a brush wipe. |
+| `ink` | A soft dry-brush stroke of plum-black ink with a light film grain, large typewriter fret numbers (Courier Prime), pen-drawn strings and stems, handwritten notes (P.M., let ring, bar numbers) and rose-gold highlights: a metallic marker for the playhead, and numbers that glow rose gold as they're played. Faint botanical line art sits on the ink (a vine of leaves and blossoms, sketched roses and a few slowly drifting petals). It opens and closes with a brush wipe. |
 
 ```bash
 python tabscroll.py mysong.gp --theme ink --out renders/mysong_ink --formats prores
@@ -199,7 +199,7 @@ Use the 4K render on 4K timelines. On a 1080p timeline, either render with `--sc
 | On screen | Meaning |
 |---|---|
 | Vertical line (amber, or a rose-gold marker in ink) | The playhead: notes are played as they cross it. |
-| Chip flash (ink: a stamp) | A note being struck. |
+| Chip flash (ink: the number glows rose gold) | A note being struck. |
 | Line along a string | The note sustains (tied, let ring, or longer than a beat). It lights up while it rings. |
 | `(5)` in parentheses | A tie carried into a new bar, so you can still see which fret is held. |
 | Arc with **H** / **P** | Hammer-on or pull-off. |
