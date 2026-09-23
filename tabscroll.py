@@ -1044,6 +1044,17 @@ class InkRenderer(Renderer):
     STRING_SPACING = 38                     # room for bigger numbers
     LABEL_INSET = 58                        # keep the string names well inside the ragged brush edge
 
+    @staticmethod
+    def flash(n, t):
+        """Played numbers stay rose for a beat: full for 0.15 s, then ease back over 0.45 s."""
+        dt = t - n.beat.t0
+        if dt < 0:
+            return 0.0
+        if dt < 0.15:
+            return 1.0
+        k = (dt - 0.15) / 0.45
+        return 0.0 if k >= 1.0 else (1.0 - k) ** 2 * (1.0 + 2.0 * k)     # smooth ease-out
+
     def _style(self, accent):
         s = self.s
         self.ink = (248, 241, 236)          # warm cream
@@ -1052,6 +1063,7 @@ class InkRenderer(Renderer):
         self.accent_hi = tuple(int(round(a + (b - a) * 0.55)) for a, b in zip(self.accent, (255, 240, 232)))
         self.accent_lo = tuple(int(round(a + (b - a) * 0.45)) for a, b in zip(self.accent, (150, 78, 96)))
         self.dark = (44, 22, 30)            # plum ink for digits on a stamp
+        self.glow = tuple(int(round(a + (b - a) * 0.25)) for a, b in zip(self.accent, self.accent_hi))
         self.string_a = 0.38 if self.variant == "card" else 0.5
         te, hand = "CourierPrime-Bold.ttf", "Caveat.ttf"
         self.f_fret = load_font(te, 28 * s)
@@ -1524,7 +1536,7 @@ class InkRenderer(Renderer):
                     continue
                 # the hit: the number itself glows rose gold for a moment; nothing covers it
                 base, base_a = (self.accent, su) if su > 0 else (self.ink, self.dim_at(x))
-                col = tuple(int(round(p + (q - p) * fl)) for p, q in zip(base, self.accent_hi))
+                col = tuple(int(round(p + (q - p) * fl)) for p, q in zip(base, self.glow))
                 self.draw_fret_text(c, n, x, y, col, base_a + (1.0 - base_a) * fl)
 
     def draw_playhead(self, c, t):
