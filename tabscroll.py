@@ -14,6 +14,7 @@ import argparse
 import bisect
 import math
 import os
+import random
 import subprocess
 import sys
 import zipfile
@@ -297,6 +298,11 @@ def load_font(name, size):
     return f
 
 
+def cap_height(font):
+    """Height of the digit 0. Some fonts report an unreliable cap height."""
+    return -font.getBounds(font.textToGlyphs("0"))[0].top()
+
+
 def ease_out(x):
     x = max(0.0, min(1.0, x))
     return 1 - (1 - x) ** 3
@@ -309,7 +315,7 @@ def ease_out(x):
 class Renderer:
     def __init__(self, sc, scale=1.0, width=1920, variant="card", fps=60,
                  preroll=3.0, postroll=2.0, px_per_beat=200.0, playhead=0.22,
-                 accent=(255, 183, 77)):
+                 accent=None):
         self.sc, self.s, self.fps = sc, scale, fps
         self.variant = variant
         self.preroll, self.postroll = preroll, postroll
@@ -333,10 +339,30 @@ class Renderer:
         self.total = preroll + sc.end_t + postroll
         self.nframes = int(math.ceil(self.total * fps))
 
+        self._style(accent)
+
+        self.beat_t0 = [b.t0 for b in sc.beats]
+        self.info = skia.ImageInfo.MakeN32Premul(self.W, self.H)
+        assert self.info.colorType() == skia.kBGRA_8888_ColorType
+        self.surf_a = skia.Surface(self.W, self.H)
+        self.surf_b = skia.Surface(self.W, self.H)
+        self.surf_c = skia.Surface(self.W, self.H)
+        self.buf_a = np.zeros((self.H, self.W, 4), np.uint8)
+        self.buf_b = np.zeros((self.H, self.W, 4), np.uint8)
+        self.buf_c = np.zeros((self.H, self.W, 4), np.uint8)
+        self.bar_t0 = [b[2] for b in sc.bars]
+        self._build_static()
+
+    # -- theme hooks (override these in a theme subclass) ------------------------
+    DEFAULT_ACCENT = (255, 183, 77)
+
+    def _style(self, accent):
+        """Colours and fonts."""
+        s = self.s
         self.ink = (242, 244, 248)
-        self.accent = accent
+        self.accent = accent or self.DEFAULT_ACCENT
         self.dark = (22, 18, 12)
-        self.string_a = 0.30 if variant == "card" else 0.40
+        self.string_a = 0.30 if self.variant == "card" else 0.40
 
         self.f_fret = load_font("Inter-SemiBold.ttf", 21 * s)
         self.f_small = load_font("Inter-Medium.ttf", 11.5 * s)
@@ -348,20 +374,27 @@ class Renderer:
         self.f_ghost = load_font("Inter-Medium.ttf", 15 * s)
         self.f_smufl = load_font("Bravura.otf", 28 * s)
         self.f_smufl_sm = load_font("Bravura.otf", 22 * s)
-        self.cap = self.f_fret.getMetrics().fCapHeight
-
-        self.beat_t0 = [b.t0 for b in sc.beats]
-        self.info = skia.ImageInfo.MakeN32Premul(self.W, self.H)
-        assert self.info.colorType() == skia.kBGRA_8888_ColorType
-        self.surf_a = skia.Surface(self.W, self.H)
-        self.surf_b = skia.Surface(self.W, self.H)
-        self.surf_c = skia.Surface(self.W, self.H)
-        self.buf_a = np.zeros((self.H, self.W, 4), np.uint8)
-        self.buf_b = np.zeros((self.H, self.W, 4), np.uint8)
-        self.buf_c = np.zeros((self.H, self.W, 4), np.uint8)
         self.f_acc = load_font("Bravura.otf", 19 * s)
-        self.bar_t0 = [b[2] for b in sc.bars]
-        self._build_static()
+        self.cap = cap_height(self.f_fret)
+
+
+    def pen(self, color=None, a=1.0, stroke=None, cap=None, shader=None):
+        """Paint for the drawn marks of the tab: strings, bar lines, stems, arcs, slides."""
+        return mkpaint(color, a, stroke=stroke, cap=cap, shader=shader)
+
+    def dashed(self, paint, on, off):
+        paint.setPathEffect(skia.DashPathEffect.Make([on, off], 0))
+        return paint
+
+    def _finish(self, out, master, lift):
+        """Last touches on the premultiplied frame: slide-in and fade."""
+        if lift > 0.02:
+            M = np.float32([[1, 0, 0], [0, 1, lift]])
+            out = cv2.warpAffine(out, M, (self.W, self.H), flags=cv2.INTER_LINEAR,
+                                 borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
+        if master < 1.0:
+            out *= master
+        return out
 
     # -- geometry -----------------------------------------------------------
     def X(self, t_song, t_now):
@@ -408,30 +441,7 @@ class Renderer:
         surf = skia.Surface(W, H)
         c = surf.getCanvas()
         c.clear(skia.ColorTRANSPARENT)
-        if self.variant == "card":
-            r = skia.Rect.MakeLTRB(self.card_l, self.card_t, self.card_r, self.card_b)
-            rr = skia.RRect.MakeRectXY(r, 18 * s, 18 * s)
-            c.drawRRect(rr, mkpaint((0, 0, 0), 0.30, blur=10 * s))
-            fill = skia.GradientShader.MakeLinear(
-                [skia.Point(0, self.card_t), skia.Point(0, self.card_b)],
-                [rgba((20, 23, 30), 0.74), rgba((10, 11, 15), 0.80)], [0, 1])
-            c.drawRRect(rr, mkpaint(shader=fill))
-            # soft light column behind the playhead
-            c.save()
-            c.clipRRect(rr, skia.ClipOp.kIntersect, True)
-            P, hw = self.P, 110 * s
-            beam = skia.GradientShader.MakeLinear(
-                [skia.Point(P - hw, 0), skia.Point(P + hw, 0)],
-                [rgba(self.accent, 0), rgba(self.accent, 0.085), rgba(self.accent, 0)], [0, 0.5, 1])
-            c.drawRect(skia.Rect.MakeLTRB(P - hw, self.card_t, P + hw, self.card_b), mkpaint(shader=beam))
-            c.restore()
-            # glass edge: brighter along the top, fading down
-            inset = skia.RRect.MakeRectXY(r.makeInset(0.5 * s, 0.5 * s), 17.5 * s, 17.5 * s)
-            sheen = skia.GradientShader.MakeLinear(
-                [skia.Point(0, self.card_t), skia.Point(0, self.card_b)],
-                [rgba((255, 255, 255), 0.22), rgba((255, 255, 255), 0.07), rgba((255, 255, 255), 0.04)],
-                [0, 0.35, 1])
-            c.drawRRect(inset, mkpaint(stroke=1 * s, shader=sheen))
+        self._build_backdrop(c)
         self.draw_labels(c)
         buf = np.zeros((H, W, 4), np.uint8)
         surf.readPixels(self.info, buf)
@@ -440,6 +450,35 @@ class Renderer:
         self.shadow_a = 0.55 if self.variant == "card" else 0.85
         self.shadow_sigma = (1.6 if self.variant == "card" else 2.4) * s
         self.shadow_dy = max(1, int(round(1.2 * s)))
+
+    def _build_backdrop(self, c):
+        """Static backdrop behind the tab, drawn once."""
+        s = self.s
+        if self.variant != "card":
+            return
+        r = skia.Rect.MakeLTRB(self.card_l, self.card_t, self.card_r, self.card_b)
+        rr = skia.RRect.MakeRectXY(r, 18 * s, 18 * s)
+        c.drawRRect(rr, mkpaint((0, 0, 0), 0.30, blur=10 * s))
+        fill = skia.GradientShader.MakeLinear(
+            [skia.Point(0, self.card_t), skia.Point(0, self.card_b)],
+            [rgba((20, 23, 30), 0.74), rgba((10, 11, 15), 0.80)], [0, 1])
+        c.drawRRect(rr, mkpaint(shader=fill))
+        # soft light column behind the playhead
+        c.save()
+        c.clipRRect(rr, skia.ClipOp.kIntersect, True)
+        P, hw = self.P, 110 * s
+        beam = skia.GradientShader.MakeLinear(
+            [skia.Point(P - hw, 0), skia.Point(P + hw, 0)],
+            [rgba(self.accent, 0), rgba(self.accent, 0.085), rgba(self.accent, 0)], [0, 0.5, 1])
+        c.drawRect(skia.Rect.MakeLTRB(P - hw, self.card_t, P + hw, self.card_b), mkpaint(shader=beam))
+        c.restore()
+        # glass edge: brighter along the top, fading down
+        inset = skia.RRect.MakeRectXY(r.makeInset(0.5 * s, 0.5 * s), 17.5 * s, 17.5 * s)
+        sheen = skia.GradientShader.MakeLinear(
+            [skia.Point(0, self.card_t), skia.Point(0, self.card_b)],
+            [rgba((255, 255, 255), 0.22), rgba((255, 255, 255), 0.07), rgba((255, 255, 255), 0.04)],
+            [0, 0.35, 1])
+        c.drawRRect(inset, mkpaint(stroke=1 * s, shader=sheen))
 
     # -- note states -----------------------------------------------------------
     @staticmethod
@@ -462,6 +501,7 @@ class Renderer:
     def render(self, t_video):
         """Return the frame at video time t_video as straight-alpha BGRA uint8."""
         t = t_video - self.preroll
+        self._tv = t_video
         W, H, s = self.W, self.H, self.s
 
         master = ease_out(max(0.0, min(1.0, t_video / 0.7, (self.total - t_video) / 0.9)))
@@ -520,18 +560,15 @@ class Renderer:
         C = self.buf_c.astype(np.float32) * (1 / 255.0)
         out *= 1.0 - C[..., 3:4]
         out += C
-        if lift > 0.02:
-            M = np.float32([[1, 0, 0], [0, 1, lift]])
-            out = cv2.warpAffine(out, M, (self.W, self.H), flags=cv2.INTER_LINEAR,
-                                 borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
-        if master < 1.0:
-            out *= master
+        out = self._finish(out, master, lift)
         alpha = out[..., 3:4]
         np.divide(out[..., :3], alpha, out=out[..., :3], where=alpha > 1e-6)
         out *= 255.0
         out += 0.5
         np.clip(out, 0, 255, out=out)
-        return out.astype(np.uint8)
+        frame = out.astype(np.uint8)
+        frame[frame[..., 3] == 0] = 0     # no stray colour in fully transparent pixels (avoids fringes)
+        return frame
 
     # -- components ------------------------------------------------------------
     def draw_strings(self, c, t):
@@ -541,7 +578,7 @@ class Renderer:
         n = self.sc.nstrings
         for i, y in enumerate(self.ys):
             w = (0.95 + 0.85 * i / max(1, n - 1)) * s
-            c.drawLine(x_beg, y, x_end, y, mkpaint(self.ink, self.string_a, stroke=w, cap=skia.Paint.kButt_Cap))
+            c.drawLine(x_beg, y, x_end, y, self.pen(self.ink, self.string_a, stroke=w, cap=skia.Paint.kButt_Cap))
 
     def draw_barlines(self, c, t, t_lo, t_hi):
         s = self.s
@@ -551,12 +588,12 @@ class Renderer:
                 continue
             x = self.X(t0, t) - self.bar_off
             if i > 0:
-                c.drawLine(x, self.y0, x, self.yb, mkpaint(self.ink, 0.36, stroke=1.4 * s, cap=skia.Paint.kButt_Cap))
+                c.drawLine(x, self.y0, x, self.yb, self.pen(self.ink, 0.36, stroke=1.4 * s, cap=skia.Paint.kButt_Cap))
             c.drawString(str(i + 1), x + 5 * s, self.y0 - 10 * s, self.f_small, mkpaint(self.ink, 0.42))
         # final double bar
         x = self.X(self.sc.end_t, t) - self.bar_off
         if x < self.W + 20 * s:
-            c.drawLine(x - 7 * s, self.y0, x - 7 * s, self.yb, mkpaint(self.ink, 0.45, stroke=1.4 * s, cap=skia.Paint.kButt_Cap))
+            c.drawLine(x - 7 * s, self.y0, x - 7 * s, self.yb, self.pen(self.ink, 0.45, stroke=1.4 * s, cap=skia.Paint.kButt_Cap))
             c.drawRect(skia.Rect.MakeLTRB(x - 3 * s, self.y0 - 0.7 * s, x + 1 * s, self.yb + 0.7 * s), mkpaint(self.ink, 0.55))
 
     def tail_span(self, n, t):
@@ -616,7 +653,7 @@ class Renderer:
             return
         txt = self.ghost_label(n)
         w = self.f_ghost.measureText(txt)
-        cap = self.f_ghost.getMetrics().fCapHeight
+        cap = cap_height(self.f_ghost)
         c.drawString(txt, x - w / 2, y + cap / 2, self.f_ghost, mkpaint(color, a))
 
     def draw_fret_text(self, c, n, x, y, color, a, font=None):
@@ -625,7 +662,7 @@ class Renderer:
             return
         if n.dead:
             d = 4.6 * self.s
-            p = mkpaint(color, a, stroke=2.3 * self.s)
+            p = self.pen(color, a, stroke=2.3 * self.s)
             c.drawLine(x - d, y - d, x + d, y + d, p)
             c.drawLine(x - d, y + d, x + d, y - d, p)
             return
@@ -659,13 +696,13 @@ class Renderer:
                 d = 0.20 * self.sp * (1 if b.fret >= a.fret else -1)
                 x1 = xa + self.half_w(a) + 3 * s
                 x2 = xb - self.half_w(b) - 3 * s
-                c.drawLine(x1, y + d, x2, y - d, mkpaint(self.ink, 0.85, stroke=1.8 * s))
+                c.drawLine(x1, y + d, x2, y - d, self.pen(self.ink, 0.85, stroke=1.8 * s))
                 continue
             ye = y - 12.5 * s
             path = skia.Path()
             path.moveTo(xa + 1 * s, ye)
             path.cubicTo(xa + 6 * s, ye - 9 * s, xb - 6 * s, ye - 9 * s, xb - 1 * s, ye)
-            c.drawPath(path, mkpaint(self.ink, 0.70, stroke=1.5 * s))
+            c.drawPath(path, self.pen(self.ink, 0.70, stroke=1.5 * s))
             if top_row.get((id(a.beat), kind)) == a.string:
                 w = self.f_hp.measureText(kind)
                 c.drawString(kind, (xa + xb) / 2 - w / 2, ye - 9.5 * s, self.f_hp, mkpaint(self.ink, 0.80))
@@ -680,7 +717,7 @@ class Renderer:
                 y = self.ys[n.string]
                 hw = self.half_w(n)
                 d = 0.22 * self.sp
-                p = mkpaint(self.ink, 0.85, stroke=1.8 * s)
+                p = self.pen(self.ink, 0.85, stroke=1.8 * s)
                 if n.slide & SL_IN_BELOW:
                     c.drawLine(x - hw - 17 * s, y + d, x - hw - 3 * s, y - d * 0.15, p)
                 if n.slide & SL_IN_ABOVE:
@@ -694,7 +731,7 @@ class Renderer:
         s = self.s
         beats = self.sc.beats
         y_txt = self.y0 - 30 * s
-        cap = self.f_tech.getMetrics().fCapHeight
+        cap = cap_height(self.f_tech)
         y_line = y_txt - cap / 2
         for spans, label in ((self.sc.pm_spans, "P.M."), (self.sc.lr_spans, "let ring")):
             for (i0, i1) in spans:
@@ -706,10 +743,9 @@ class Renderer:
                 c.drawString(label, x0, y_txt, self.f_tech, mkpaint(self.ink, 0.75))
                 xl = x0 + self.f_tech.measureText(label) + 6 * s
                 if x1 - xl > 10 * s:
-                    p = mkpaint(self.ink, 0.45, stroke=1.3 * s, cap=skia.Paint.kButt_Cap)
-                    p.setPathEffect(skia.DashPathEffect.Make([5 * s, 4 * s], 0))
+                    p = self.dashed(self.pen(self.ink, 0.45, stroke=1.3 * s, cap=skia.Paint.kButt_Cap), 5 * s, 4 * s)
                     c.drawLine(xl, y_line, x1, y_line, p)
-                    p2 = mkpaint(self.ink, 0.45, stroke=1.3 * s, cap=skia.Paint.kButt_Cap)
+                    p2 = self.pen(self.ink, 0.45, stroke=1.3 * s, cap=skia.Paint.kButt_Cap)
                     c.drawLine(x1, y_line - 0.65 * s, x1, y_line + 6 * s, p2)
 
     def draw_header(self, c, t):
@@ -721,7 +757,7 @@ class Renderer:
         num, den = self.sc.bars[0][4]
         xs = x1 - 34 * s
         mid = (self.y0 + self.yb) / 2
-        ch = self.f_sig.getMetrics().fCapHeight
+        ch = cap_height(self.f_sig)
         clear = mkpaint((0, 0, 0), 1.0, blend=skia.BlendMode.kDstOut)
         for txt, yc in ((str(num), mid - 0.5 * ch - 4 * s), (str(den), mid + 0.5 * ch + 4 * s)):
             w = self.f_sig.measureText(txt)
@@ -738,8 +774,8 @@ class Renderer:
     def draw_rhythm(self, c, t, vis):
         s = self.s
         col, a = self.ink, 0.55
-        stem = mkpaint(col, a, stroke=1.35 * s, cap=skia.Paint.kButt_Cap)
-        fill = mkpaint(col, a)
+        stem = self.pen(col, a, stroke=1.35 * s, cap=skia.Paint.kButt_Cap)
+        fill = self.pen(col, a)
         bt, gap = 3.4 * s, 2.8 * s
         sb = self.stem_bot
         vis_set = set(id(b) for b in vis)
@@ -872,7 +908,7 @@ class Renderer:
                 c.restore()
 
     def draw_labels(self, c):
-        cap = self.f_lab.getMetrics().fCapHeight
+        cap = cap_height(self.f_lab)
         paint = mkpaint(self.ink, 0.6)
         for name, y in zip(self.sc.tuning, self.ys):
             letter, acc = name[:1], name[1:]
@@ -917,6 +953,361 @@ class Renderer:
 
 
 # --------------------------------------------------------------------------
+# "ink" theme: dry-brush backdrop, typewriter numbers, pen lines, film grain
+# --------------------------------------------------------------------------
+
+def _value_noise(n, cell, rng):
+    """1-D value noise in [-1, 1]: random points every `cell` samples, eased between."""
+    cell = max(float(cell), 1.0)
+    pts = rng.uniform(-1.0, 1.0, int(n / cell) + 3)
+    xs = np.arange(n) / cell
+    i = xs.astype(int)
+    f = (1 - np.cos((xs - i) * np.pi)) / 2
+    return pts[i] * (1 - f) + pts[i + 1] * f
+
+
+def _fbm(n, cells, rng):
+    out, amp, tot = np.zeros(n), 1.0, 0.0
+    for cell in cells:
+        out += amp * _value_noise(n, cell, rng)
+        tot += amp
+        amp *= 0.55
+    return out / tot
+
+
+def _blur1d(v, sigma):
+    r = max(1, int(3 * sigma))
+    k = np.exp(-0.5 * (np.arange(-r, r + 1) / sigma) ** 2)
+    return np.convolve(np.pad(v, r, mode="edge"), k / k.sum(), mode="valid")
+
+
+def _unit(v):
+    return v / (np.abs(v).max() + 1e-9)
+
+
+def _seed(*parts):
+    """Stable 32-bit seed from a few values (so each note keeps its own quirks)."""
+    h = 2166136261
+    for ch in repr(parts).encode():
+        h = ((h ^ ch) * 16777619) & 0xFFFFFFFF
+    return h
+
+
+def _smoothstep(v):
+    v = np.clip(v, 0.0, 1.0)
+    return v * v * (3 - 2 * v)
+
+
+class InkRenderer(Renderer):
+    """Rugged, hand-made look: a dry-brush ink stroke for a backdrop, typewriter
+    fret numbers, pen-drawn lines, handwritten notes, ink-stamp hits and grain."""
+
+    DEFAULT_ACCENT = (228, 98, 58)          # burnt vermilion
+
+    def _style(self, accent):
+        s = self.s
+        self.ink = (236, 228, 212)          # bone
+        self.accent = accent or self.DEFAULT_ACCENT
+        self.dark = (28, 19, 13)
+        self.string_a = 0.38 if self.variant == "card" else 0.5
+        te, hand = "SpecialElite-Regular.ttf", "Caveat.ttf"
+        self.f_fret = load_font(te, 22 * s)
+        self.f_small = load_font(hand, 16 * s)
+        self.f_tech = load_font(hand, 19 * s)
+        self.f_hp = load_font(hand, 15 * s)
+        self.f_lab = load_font(te, 15 * s)
+        self.f_sig = load_font(te, 50 * s)
+        self.f_tempo = load_font(hand, 19 * s)
+        self.f_ghost = load_font(te, 15 * s)
+        self.f_hud = load_font(hand, 19 * s)
+        self.f_smufl = load_font("Bravura.otf", 28 * s)
+        self.f_smufl_sm = load_font("Bravura.otf", 22 * s)
+        self.f_acc = load_font("Bravura.otf", 19 * s)
+        self.cap = cap_height(self.f_fret)
+        self.rough = skia.DiscretePathEffect.Make(7 * s, 0.5 * s, 3)
+        self.rough_fill = skia.DiscretePathEffect.Make(2.5 * s, 0.8 * s, 5)
+
+    def pen(self, color=None, a=1.0, stroke=None, cap=None, shader=None):
+        p = mkpaint(color, a, stroke=stroke, cap=cap, shader=shader)
+        p.setPathEffect(self.rough)
+        return p
+
+    def dashed(self, paint, on, off):
+        dash = skia.DashPathEffect.Make([on * 1.4, off, on * 0.7, off * 1.3, on, off * 0.8], 0)
+        paint.setPathEffect(skia.PathEffect.MakeCompose(self.rough, dash))
+        return paint
+
+    # -- static pieces -----------------------------------------------------------
+    def _build_backdrop(self, c):
+        s, W, H = self.s, self.W, self.H
+        rng = np.random.default_rng(23)
+        self.xs_grid = np.arange(W, dtype=np.float32)
+        self.wipe_jag = (60 * s * _unit(_blur1d(rng.standard_normal(H), 1.2 * s))).astype(np.float32)
+        self.grain = []
+        for _ in range(4):
+            g = cv2.GaussianBlur(rng.standard_normal((H, W)).astype(np.float32), (0, 0), 1.2 * s)
+            self.grain.append(g / g.std())
+
+        # hand-drawn strings: a slow waver plus a faint second pass of the pen
+        x_beg, x_end = self.lab_x + 18 * s, self.card_r
+        n = int((x_end - x_beg) / (6 * s)) + 2
+        xs = np.linspace(x_beg, x_end, n)
+        self.string_paths = []
+        for y in self.ys:
+            dy = 0.8 * s * _fbm(n, [45, 12, 4], rng)
+            dy2 = dy + 0.45 * s + 0.5 * s * _fbm(n, [30, 8], rng)
+            paths = []
+            for d in (dy, dy2):
+                p = skia.Path()
+                p.moveTo(xs[0], y + d[0])
+                for xv, dv in zip(xs[1:].tolist(), d[1:].tolist()):
+                    p.lineTo(xv, y + dv)
+                paths.append(p)
+            self.string_paths.append(paths)
+
+        # the playhead: a marker stroke with a small arrowhead
+        P, top, bot = self.P, self.y0 - 20 * s, self.yb + 18 * s
+        m = int((bot - top) / (3 * s)) + 2
+        yy = np.linspace(top, bot, m)
+        left = P - 1.5 * s + 0.55 * s * _fbm(m, [12, 4, 2], rng)
+        right = P + 1.5 * s + 0.55 * s * _fbm(m, [12, 4, 2], rng)
+        ph = skia.Path()
+        ph.moveTo(left[0], yy[0])
+        for xv, yv in zip(left[1:].tolist(), yy[1:].tolist()):
+            ph.lineTo(xv, yv)
+        for xv, yv in zip(right[::-1].tolist(), yy[::-1].tolist()):
+            ph.lineTo(xv, yv)
+        ph.close()
+        tri = skia.Path()
+        tri.moveTo(P - 6 * s, top - 8 * s)
+        tri.lineTo(P + 6.5 * s, top - 7 * s)
+        tri.lineTo(P + 0.5 * s, top + 1.5 * s)
+        tri.close()
+        self.ph_path, self.ph_tri = ph, tri
+
+        if self.variant != "card":
+            return
+        img = self._brush_stroke(np.random.default_rng(7))   # own stream: same stroke for every tab
+        c.drawImage(skia.Image.fromarray(img, colorType=skia.kRGBA_8888_ColorType,
+                                         alphaType=skia.kUnpremul_AlphaType), 0, 0)
+
+    def _brush_stroke(self, rng):
+        """One wide stroke of ink: firm where the brush lands on the left,
+        dry and streaky where it lifts off on the right."""
+        s, W, H = self.s, self.W, self.H
+        y = np.arange(H, dtype=np.float32)[:, None]
+        x = np.arange(W, dtype=np.float32)[None, :]
+        swell = 3 * s * _fbm(W, [700 * s, 260 * s], rng)            # the stroke thickens and thins
+        top = self.card_t + 7 * s - swell + 3 * s * _fbm(W, [120 * s, 35 * s, 10 * s], rng)
+        bot = self.card_b - 7 * s + swell + 3 * s * _fbm(W, [110 * s, 32 * s, 9 * s], rng)
+        cov_y = (np.clip((y - top[None, :]) / (1.3 * s) + 0.5, 0, 1)
+                 * np.clip((bot[None, :] - y) / (1.3 * s) + 0.5, 0, 1))
+
+        bl = _unit(_blur1d(rng.standard_normal(H), 2.2 * s))      # bristles come in clumps,
+        br = _unit(_blur1d(rng.standard_normal(H), 2.2 * s))      # not single-pixel slivers
+        yn = (np.arange(H) - (self.card_t + self.card_b) / 2) / (self.card_b - self.card_t)
+        start = (self.card_l + 4 * s + 10 * s * yn + 6 * s * (yn * 2) ** 2      # the brush lands at a slant
+                 + 8 * s * (0.5 + 0.5 * _fbm(H, [70 * s, 20 * s], rng))
+                 + 14 * s * np.maximum(0, bl) ** 1.4)
+        end = (self.card_r - 6 * s - 26 * s * (0.5 + 0.5 * _fbm(H, [70 * s, 20 * s], rng))
+               - 150 * s * np.maximum(0, br) ** 1.6)
+        ramp_l = _blur1d((8 + 16 * rng.random(H)) * s, 2.0 * s)
+        ramp_r = _blur1d((60 + 140 * rng.random(H)) * s, 2.0 * s)
+        cov_x = (np.clip((x - start[:, None]) / ramp_l[:, None], 0, 1) ** 0.55
+                 * np.clip((end[:, None] - x) / ramp_r[:, None], 0, 1) ** 0.7)
+
+        # long bristle marks running along the stroke
+        small = rng.standard_normal((H, max(4, int(W / (60 * s))))).astype(np.float32)
+        streak = cv2.resize(small, (W, H), interpolation=cv2.INTER_CUBIC)
+        k = 2 * int(3 * 3.5 * s) + 1
+        streak = cv2.GaussianBlur(streak, (1, k), sigmaX=0, sigmaY=3.5 * s)
+        streak /= streak.std() + 1e-9
+
+        dist = np.minimum(y - top[None, :], bot[None, :] - y)
+        near = np.exp(-np.maximum(dist, 0) / (6 * s))
+        dry = 1 - 0.6 * near * np.clip(streak, 0, None) / 2.5          # ragged, dry edges
+        body = 0.86
+        alpha = np.clip(cov_x * cov_y * body * dry, 0, 0.93)
+        # ink wicking a few pixels past the edge, very faint
+        wick_t = top - (2 + 4 * (0.5 + 0.5 * _fbm(W, [60 * s, 14 * s], rng))) * s
+        wick_b = bot + (2 + 4 * (0.5 + 0.5 * _fbm(W, [60 * s, 14 * s], rng))) * s
+        wick = (np.clip((y - wick_t[None, :]) / (2 * s), 0, 1) * np.clip((wick_b[None, :] - y) / (2 * s), 0, 1)
+                * cov_x * 0.22 * (0.7 + 0.3 * np.clip(streak, -1, 1)))
+        alpha = np.maximum(alpha, wick)
+        pool = 5 * _fbm(W, [400 * s, 130 * s], rng)[None, :]         # ink pooling: gentle tone shifts
+        rgb = np.stack([17 + 6 * streak + pool, 15 + 5.2 * streak + pool * 0.9, 13 + 4.4 * streak + pool * 0.8], -1)
+        out = np.dstack([np.clip(rgb, 0, 255), alpha[..., None] * 255])
+        return np.ascontiguousarray(out.round().astype(np.uint8))
+
+    # -- per-frame finish: film grain and a brush-wipe in/out ---------------------
+    def _finish(self, out, master, lift):
+        s, tv = self.s, self._tv
+        g = self.grain[int(tv * 24) % len(self.grain)]
+        out[..., :3] += (0.018 * g)[..., None] * out[..., 3:4]
+        k_in, k_out = min(1.0, tv / 1.0), min(1.0, (self.total - tv) / 1.0)
+        if k_in < 1.0 or k_out < 1.0:
+            soft, travel = 70 * s, self.W + 380 * s
+            xs, jag = self.xs_grid[None, :], self.wipe_jag[:, None]
+            m = np.ones((self.H, self.W), np.float32)
+            if k_in < 1.0:
+                edge = -190 * s + (0.5 - 0.5 * math.cos(math.pi * k_in)) * travel
+                m *= _smoothstep((edge + jag - xs) / soft)
+            if k_out < 1.0:
+                edge = -190 * s + (0.5 - 0.5 * math.cos(math.pi * (1 - k_out))) * travel
+                m *= _smoothstep((xs - edge + jag) / soft)
+            out *= m[..., None]
+        return out
+
+    # -- hand-made marks --------------------------------------------------------
+    def draw_strings(self, c, t):
+        s = self.s
+        x_end = min(self.card_r, self.X(self.sc.end_t, t) - self.bar_off)
+        c.save()
+        c.clipRect(skia.Rect.MakeLTRB(0, 0, x_end, self.H))
+        n = self.sc.nstrings
+        for i, (p1, p2) in enumerate(self.string_paths):
+            w = (0.9 + 0.9 * i / max(1, n - 1)) * s
+            c.drawPath(p1, mkpaint(self.ink, self.string_a, stroke=w, cap=skia.Paint.kButt_Cap))
+            c.drawPath(p2, mkpaint(self.ink, self.string_a * 0.35, stroke=w * 0.6, cap=skia.Paint.kButt_Cap))
+        c.restore()
+
+    def draw_fret_text(self, c, n, x, y, color, a, font=None):
+        """Typewriter numbers, each struck a little off-square."""
+        if a <= 0.003:
+            return
+        rng = random.Random(_seed(n.beat.t0, n.string))
+        c.save()
+        c.rotate(rng.uniform(-4.5, 4.5), x, y)
+        c.translate(0, rng.uniform(-0.8, 0.8) * self.s)
+        super().draw_fret_text(c, n, x, y, color, a, font)
+        c.restore()
+
+    def bristles(self, n):
+        rng = random.Random(_seed(n.beat.t0, n.string, "brush"))
+        s = self.s
+        return [(rng.uniform(-1.8, 1.8) * s, rng.uniform(0.8, 1.5) * s,
+                 rng.uniform(0.45, 1.0), rng.uniform(0.7, 1.0)) for _ in range(4)]
+
+    def draw_brush(self, c, n, segs, color=None, a=1.0, shader=None):
+        """A sustain as a few dry-brush bristle lines of uneven length."""
+        y = self.ys[n.string]
+        g0, g1 = segs[0][0], segs[-1][1]
+        for dy, w, al, frac in self.bristles(n):
+            xe = g0 + (g1 - g0) * frac
+            p = self.pen(color, a * al, stroke=w, shader=shader)
+            if shader is not None:
+                p.setAlphaf(a * al)
+            for xa, xb in segs:
+                xb = min(xb, xe)
+                if xb - xa > 1:
+                    c.drawLine(xa, y + dy, xb, y + dy, p)
+
+    def draw_tails(self, c, t, vis):
+        for b in vis:
+            for n in b.notes:
+                if n.tail:
+                    segs = self.tail_segments(n, t)
+                    if segs:
+                        self.draw_brush(c, n, segs, self.ink, 0.30)
+
+    def stamp(self, c, n, x, y, fl):
+        """An ink stamp behind a note as it is played."""
+        s = self.s
+        rng = random.Random(_seed(n.beat.t0, n.string, "stamp"))
+        r = self.chip_rect(n, x, y)
+        rx, ry = r.width() / 2 + 2 * s, r.height() / 2 + 1.5 * s
+        rot, ph = rng.uniform(-0.15, 0.15), rng.uniform(0, 2 * math.pi)
+        path = skia.Path()
+        for j in range(22):
+            th = 2 * math.pi * j / 22
+            wob = 1 + 0.07 * math.sin(3 * th + ph) + rng.uniform(-0.05, 0.05)
+            px, py = rx * wob * math.cos(th), ry * wob * math.sin(th)
+            X = x + px * math.cos(rot) - py * math.sin(rot)
+            Y = y + px * math.sin(rot) + py * math.cos(rot)
+            if j == 0:
+                path.moveTo(X, Y)
+            else:
+                path.lineTo(X, Y)
+        path.close()
+        c.drawPath(path, mkpaint(self.accent, 0.35 * fl, blur=3 * s))           # ink bleed
+        p = mkpaint(self.accent, 0.95 * fl)
+        p.setPathEffect(self.rough_fill)
+        c.drawPath(path, p)
+        for _ in range(5):                                                     # paper showing through
+            c.drawCircle(x + rng.uniform(-0.75, 0.75) * rx, y + rng.uniform(-0.7, 0.7) * ry,
+                         rng.uniform(0.5, 1.2) * s, mkpaint(self.ink, 0.45 * fl))
+
+    def draw_live(self, c, t, vis):
+        for b in vis:
+            x = self.X(b.t0, t)
+            for n in b.notes:
+                y = self.ys[n.string]
+                if n.hidden:
+                    su = self.sustain(n.root, t)
+                    if su > 0 and x <= self.P:
+                        self.draw_ghost(c, n, x, y, self.accent, 0.9 * su)
+                    continue
+                fl, su = self.flash(n, t), self.sustain(n, t)
+                if fl <= 0 and su <= 0:
+                    continue
+                if su > 0:
+                    segs = self.tail_segments(n, t)
+                    if segs and segs[0][0] < self.P:
+                        comet = skia.GradientShader.MakeLinear(
+                            [skia.Point(segs[0][0], 0), skia.Point(max(self.P, segs[0][0] + 1), 0)],
+                            [rgba(self.accent, 0.35 * su), rgba(self.accent, 0.95 * su)], [0, 1])
+                        c.save()
+                        c.clipRect(skia.Rect.MakeLTRB(0, 0, self.P, self.H))
+                        self.draw_brush(c, n, segs, shader=comet)
+                        c.restore()
+                if fl <= 0:
+                    self.draw_fret_text(c, n, x, y, self.accent, su)
+                    continue
+                pop = 1.0 + 0.08 * math.exp(-max(0.0, t - b.t0) / 0.06)
+                c.save()
+                c.translate(x, y)
+                c.scale(pop, pop)
+                c.translate(-x, -y)
+                self.stamp(c, n, x, y, fl)
+                base, base_a = (self.accent, su) if su > 0 else (self.ink, self.dim_at(x))
+                mix = float(_smoothstep((fl - 0.3) / 0.3))   # no muddy in-between colour
+                col = tuple(int(round(p + (q - p) * mix)) for p, q in zip(base, self.dark))
+                self.draw_fret_text(c, n, x, y, col, base_a + (1.0 - base_a) * fl)
+                c.restore()
+
+    def draw_playhead(self, c, t):
+        s = self.s
+        c.drawPath(self.ph_path, mkpaint(self.accent, 0.22, blur=3.5 * s))
+        for path in (self.ph_path, self.ph_tri):
+            p = mkpaint(self.accent, 0.95)
+            p.setPathEffect(self.rough_fill)
+            c.drawPath(path, p)
+
+    def draw_hud(self, c, t):
+        s = self.s
+        x0, x1 = self.card_l + 30 * s, self.card_r - 30 * s
+        y = self.card_b - 10 * s
+        c.drawLine(x0, y, x1, y, self.pen(self.ink, 0.16, stroke=1.2 * s))
+        frac = min(1.0, max(0.0, t / self.sc.end_t))
+        if frac > 0:
+            xf = x0 + (x1 - x0) * frac
+            c.save()
+            c.clipRect(skia.Rect.MakeLTRB(0, 0, xf, self.H))
+            c.drawLine(x0, y, x1, y, self.pen(self.accent, 0.75, stroke=1.7 * s))
+            c.restore()
+            c.drawLine(xf - 1 * s, y - 4.5 * s, xf + 1 * s, y + 4.5 * s, self.pen(self.accent, 1.0, stroke=2 * s))
+        nbars = len(self.sc.bars)
+        cur = min(nbars, max(1, bisect.bisect_right(self.bar_t0, t)))
+        xl, yb = self.card_l + 24 * s, self.y0 - 30 * s
+        for txt, a in (("bar ", 0.5), (str(cur), 0.9), (" / %d" % nbars, 0.5)):
+            c.drawString(txt, xl, yb, self.f_hud, mkpaint(self.ink, a))
+            xl += self.f_hud.measureText(txt)
+
+
+THEMES = {"studio": Renderer, "ink": InkRenderer}
+
+
+# --------------------------------------------------------------------------
 # Output
 # --------------------------------------------------------------------------
 
@@ -936,9 +1327,14 @@ def over(bg, fg_rgba, x, y):
 _worker = None
 
 
+def make_renderer(sc, kw):
+    kw = dict(kw)
+    return THEMES[kw.pop("theme")](sc, **kw)
+
+
 def _init_worker(gp, track, drop, tuning, kw):
     global _worker
-    _worker = Renderer(load_score(gp, track, drop, tuning), **kw)
+    _worker = make_renderer(load_score(gp, track, drop, tuning), kw)
 
 
 def _render_frame(k):
@@ -956,7 +1352,7 @@ def ffmpeg_cmd(r, args, fmts):
     for i, f in enumerate(fmts):
         if f == "prores":
             fc.append(f"[v{i}]scale=out_color_matrix=bt709:out_range=tv,format=yuva444p10le[o{i}]")
-            maps += ["-map", f"[o{i}]", "-c:v", "prores_ks", "-profile:v", "4444", "-alpha_bits", "16",
+            maps += ["-map", f"[o{i}]", "-c:v", "prores_ks", "-profile:v", "4444", "-alpha_bits", "8",
                      "-vendor", "apl0", *tags, f"{args.out}_prores4444.mov"]
         elif f == "webm":
             fc.append(f"[v{i}]scale=out_color_matrix=bt709:out_range=tv,format=yuva420p[o{i}]")
@@ -1035,12 +1431,15 @@ def main():
     ap.add_argument("--tuning", help='string names to display, low to high, e.g. "A E B E G# B" '
                                      "(labels only; fret numbers are unchanged)")
     ap.add_argument("--scale", type=float, default=1.0, help="1 = 1920 wide, 2 = 3840 wide")
-    ap.add_argument("--variant", choices=["card", "clean"], default="card")
+    ap.add_argument("--theme", choices=sorted(THEMES), default="studio",
+                    help="studio = clean glass card, ink = rugged dry-brush / typewriter look")
+    ap.add_argument("--variant", choices=["card", "clean"], default="card",
+                    help="card = with backdrop, clean = tab only")
     ap.add_argument("--fps", type=int, default=60)
     ap.add_argument("--preroll", type=float, default=3.0)
     ap.add_argument("--px-per-beat", type=float, default=200.0, help="scroll speed (at 1920 wide)")
     ap.add_argument("--playhead", type=float, default=0.22, help="playhead position, fraction of width")
-    ap.add_argument("--accent", default="FFB74D", help="highlight colour, hex RGB")
+    ap.add_argument("--accent", help="highlight colour, hex RGB (default depends on the theme)")
     ap.add_argument("--still", type=float, action="append", help="render PNG stills at these video times")
     ap.add_argument("--out", help="output basename")
     ap.add_argument("--formats", default="prores,webm", help="comma list of prores,webm,preview")
@@ -1055,11 +1454,11 @@ def main():
         return
     drop = tuple(int(v) for v in args.drop_strings.split(",") if v.strip())
     tuning = parse_tuning(args.tuning) if args.tuning else None
-    kw = dict(scale=args.scale, variant=args.variant, fps=args.fps,
-              preroll=args.preroll, px_per_beat=args.px_per_beat, playhead=args.playhead,
-              accent=tuple(int(args.accent.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)))
+    accent = tuple(int(args.accent.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)) if args.accent else None
+    kw = dict(theme=args.theme, scale=args.scale, variant=args.variant, fps=args.fps,
+              preroll=args.preroll, px_per_beat=args.px_per_beat, playhead=args.playhead, accent=accent)
     sc = load_score(args.gp, args.track, drop, tuning)
-    r = Renderer(sc, **kw)
+    r = make_renderer(sc, kw)
     print(f"{sc.track_name}: {len(sc.bars)} bars, {len(sc.beats)} beats, strings {' '.join(sc.tuning)}, "
           f"dropped {sc.dropped} notes; frame {r.W}x{r.H}, {r.total:.3f}s, {r.nframes} frames; "
           f"bar 1 downbeat at {args.preroll:.3f}s", file=sys.stderr)

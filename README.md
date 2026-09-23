@@ -3,7 +3,8 @@
 Turn a Guitar Pro tab into a single-line tab that scrolls from right to left, for playthrough videos.
 The output is a video with a transparent background, so you can drop it on top of your footage in any editor.
 
-![tabscroll preview](docs/preview.png)
+![tabscroll preview, studio theme](docs/preview.png)
+![tabscroll preview, ink theme](docs/preview-ink.png)
 
 - **Synced by design.** The tab scrolls at a constant speed, and each note hits the playhead exactly when it's played.
   Line up one point with your recording and the rest of the song stays in sync.
@@ -11,6 +12,7 @@ The output is a video with a transparent background, so you can drop it on top o
   palm mute and let ring lines, bar numbers, tempo, time signature, and rhythm stems and beams.
 - **Live feedback.** Each note flashes as it's played. Held and let-ring notes draw a sustain line that lights
   up while they ring, and notes already played are dimmed.
+- **Two looks.** `studio` is clean and polished. `ink` is rugged and hand-made. See [Themes](#themes).
 - **Editor-ready output.** ProRes 4444 with alpha for Premiere, Resolve, Final Cut and After Effects,
   WebM VP9 with alpha for OBS and the web, and an MP4 preview.
 
@@ -34,7 +36,7 @@ Installing ffmpeg:
 | macOS | `brew install ffmpeg` |
 | Linux | `sudo apt install ffmpeg` (or your distro's package) |
 
-Check it works with `ffmpeg -version`. The fonts (Inter and Bravura) come with the repo, so there's nothing else to install.
+Check it works with `ffmpeg -version`. The fonts (Inter, Bravura, Special Elite and Caveat) come with the repo, so there's nothing else to install.
 
 Try it on the bundled demo:
 
@@ -112,13 +114,14 @@ python tabscroll.py mysong.gp --scale 2 --variant clean --out renders/mysong_4k_
 | `--drop-strings 0,1` | none | Hide strings, counted from the lowest string starting at 0. |
 | `--tuning "A E B E G# B"` | from file | Relabel the strings, low to high. Labels only; the fret numbers don't change. |
 | `--scale` | `1` | `1` gives a 1920-wide strip (for 1080p); `2` gives a 3840-wide strip (for 4K). |
-| `--variant` | `card` | `card` puts the tab on a dark rounded backdrop. `clean` shows only the tab with a soft shadow. |
+| `--theme` | `studio` | The look: `studio` or `ink`. See [Themes](#themes). |
+| `--variant` | `card` | `card` draws the theme's backdrop behind the tab. `clean` shows only the tab, with a soft shadow. |
 | `--formats` | `prores,webm` | Any of `prores`, `webm`, `preview` (comma-separated). |
 | `--fps` | `60` | Frame rate. Use 30 if your project is 30 fps and you want smaller files. |
 | `--preroll` | `3.0` | Seconds before bar 1 reaches the playhead. |
 | `--px-per-beat` | `200` | Scroll speed: bigger is faster and more spread out. Try 240–280 for dense 16th-note riffs, 160 for slow songs. |
 | `--playhead` | `0.22` | Playhead position, as a fraction of the width. |
-| `--accent` | `FFB74D` | Highlight color, as hex (e.g. `4FD1FF` cyan, `FF5C7A` pink, `9BE564` green). |
+| `--accent` | per theme | Highlight color, as hex. Defaults to amber `FFB74D` for studio and burnt vermilion `E4623A` for ink. Try `4FD1FF` cyan, `FF5C7A` pink or `9BE564` green. |
 | `--still T` | | Render a PNG at video time `T` instead of a video. Repeatable. |
 | `--bg image.png` | | Background for `--still` composites and the `preview` MP4. Without it, previews use a plain dark gradient. |
 | `--start S`, `--limit N` | | Render only part of the song (N seconds starting at S), which is handy for quick tests. |
@@ -133,6 +136,26 @@ python tabscroll.py mysong.gp --scale 2 --variant clean --out renders/mysong_4k_
 | `preview` | `*_preview.mp4` | Just for looking at: a 16:9 H.264 video with the strip composited on the background. Not transparent. |
 
 The strip is 1920×322 at `--scale 1` or 3840×644 at `--scale 2`. It gets taller if you keep 7+ strings.
+
+## Themes
+
+Pick one with `--theme`. Both work with `--variant clean`, `--accent` and every other option.
+
+| Theme | Look |
+|---|---|
+| `studio` (default) | A dark glass card, Inter numbers, glossy amber note chips, comet sustain lines and a soft light behind the playhead. Clean and polished. |
+| `ink` | A dry-brush ink stroke with ragged edges and film grain, typewriter fret numbers struck slightly off-square, pen-drawn strings and stems, handwritten notes (P.M., let ring, bar numbers), a marker-stroke playhead and ink stamps for note hits. It opens and closes with a brush wipe. |
+
+```bash
+python tabscroll.py mysong.gp --theme ink --out renders/mysong_ink --formats prores
+```
+
+**Size note:** ProRes compresses every frame separately, so the ink theme's texture and grain make its files
+roughly 3× larger than studio's (about 3 GB per minute at 1080 width). The WebM output stays small.
+
+Adding a theme: subclass `Renderer` in `tabscroll.py`, override the hooks you need (`_style` for colors
+and fonts, `_build_backdrop`, `pen`, `draw_live`, `draw_playhead`, `draw_hud`, `_finish`), then register
+it in `THEMES`. `InkRenderer` is a complete example.
 
 ## 6. Put it in your video
 
@@ -175,8 +198,8 @@ Use the 4K render on 4K timelines. On a 1080p timeline, either render with `--sc
 
 | On screen | Meaning |
 |---|---|
-| Amber vertical line | The playhead: notes are played as they cross it. |
-| Amber chip flash | A note being struck. |
+| Vertical line (amber, or a rust marker in ink) | The playhead: notes are played as they cross it. |
+| Chip flash (ink: a stamp) | A note being struck. |
 | Line along a string | The note sustains (tied, let ring, or longer than a beat). It lights up while it rings. |
 | `(5)` in parentheses | A tie carried into a new bar, so you can still see which fret is held. |
 | Arc with **H** / **P** | Hammer-on or pull-off. |
@@ -208,5 +231,6 @@ only includes what tabscroll reads.
 
 ## License
 
-Code: MIT. Fonts: [Inter](https://github.com/rsms/inter) and [Bravura](https://github.com/steinbergmedia/bravura),
-both under the SIL Open Font License 1.1 (see `fonts/`).
+Code: MIT. Fonts: [Inter](https://github.com/rsms/inter), [Bravura](https://github.com/steinbergmedia/bravura) and
+[Caveat](https://github.com/googlefonts/caveat) under the SIL Open Font License 1.1, and
+[Special Elite](https://fonts.google.com/specimen/Special+Elite) under the Apache License 2.0 (see `fonts/`).
