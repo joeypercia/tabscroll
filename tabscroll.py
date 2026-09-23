@@ -331,7 +331,7 @@ class Renderer:
         self.H += self.H % 2
         self.card_l, self.card_r = 12 * s, self.W - 12 * s
         self.card_t, self.card_b = 8 * s, self.H - 8 * s
-        self.lab_x = self.card_l + 28 * s
+        self.lab_x = self.card_l + self.LABEL_INSET * s
         self.P = round(self.W * playhead)
         bpm0 = sc.bars[0][3]
         self.pps = px_per_beat * s * bpm0 / 60.0           # pixels per second
@@ -359,6 +359,7 @@ class Renderer:
     # -- theme hooks (override these in a theme subclass) ------------------------
     DEFAULT_ACCENT = (255, 183, 77)
     STRING_SPACING = 34
+    LABEL_INSET = 28                        # string names, from the backdrop's left edge
 
     def _style(self, accent):
         """Colours and fonts."""
@@ -1041,6 +1042,7 @@ class InkRenderer(Renderer):
 
     DEFAULT_ACCENT = (228, 158, 146)        # rose gold
     STRING_SPACING = 38                     # room for bigger numbers
+    LABEL_INSET = 58                        # keep the string names well inside the ragged brush edge
 
     def _style(self, accent):
         s = self.s

@@ -155,7 +155,9 @@ roughly 2–3× larger than studio's (a few GB per minute at 1080 width). The We
 
 Adding a theme: subclass `Renderer` in `tabscroll.py`, override the hooks you need (`_style` for colors
 and fonts, `_build_backdrop`, `pen`, `draw_live`, `draw_playhead`, `draw_hud`, `_finish`), then register
-it in `THEMES`. `InkRenderer` is a complete example.
+it in `THEMES`. `InkRenderer` is a complete example. Simple layout settings are class attributes:
+`STRING_SPACING`, `LABEL_INSET` (how far the string names sit from the left edge) and, in the ink theme,
+`FLORAL_STRENGTH` (opacity of the floral layer).
 
 ## 6. Put it in your video
 
